@@ -132,17 +132,36 @@ function isRegionalChannel(name = '', region = '') {
 }
 
 /* ----------------- AU classification + order --------------- */
-function isOtherChannel(channelName) {
-  const name = channelName.toUpperCase();
+// “Other Channels” – include SBS specialty + misc FAST/shorts etc.
+function isOtherChannel(channelName = '') {
+  const u = String(channelName).toUpperCase();
+  // keep digits, letters, spaces; turn punctuation (incl. “/” and “?”) into spaces
+  const normalized = u.replace(/[^A-Z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+
   const OTHER_CHANNELS = [
+    // ABC short-form/extra
     'ABC BUSINESS','ABC BUSINESS IN 90 SECONDS','ABC NEWS IN 90 SECONDS','ABC SPORT IN 90 SECONDS',
     'ABC WEATHER IN 90 SECONDS',
+    // SBS specialty
     'SBS ARABIC','SBS CHILL','SBS POPASIA','SBS RADIO 1','SBS RADIO 2','SBS RADIO 3',
     'SBS SOUTH ASIAN','SBS WORLD MOVIES','SBS WORLD WATCH','SBS WORLDWATCH','SBS FOOD','SBS VICELAND',
-    '8 OUT OF 10 CATS'
+    // extras
+    '8 OUT OF 10 CATS' // always in Others
   ];
-  return OTHER_CHANNELS.includes(name);
+  if (OTHER_CHANNELS.includes(u)) return true;
+
+  // HYBPA? (full title + shorthand)
+  if (/\bHAVE YOU BEEN PAYING ATTENTION\b/.test(normalized)) return true;
+  if (/\bHYBPA\b/.test(normalized)) return true;
+
+  // 8 Out of 10 Cats (+ Does Countdown) — robust matching
+  if (/(?:\b8\b|\bEIGHT\b)\s*(?:OUT\s*OF\s*)?\b10\b\s*CATS(?:\s*DOES\s*COUNTDOWN)?\b/.test(normalized)) {
+    return true;
+  }
+
+  return false;
 }
+
 
 const TRADITIONAL_CHANNELS = [
   ['ABC TV','ABC','ABC NEWS','ABC ME','ABC KIDS','ABC TV PLUS','ABC ENTERTAINS','ABC FAMILY'],
@@ -962,11 +981,11 @@ app.use((req, res, next) => {
 app.use('/', sdkRouter);
 
 //Online Enable Addon
-//module.exports.handler = serverless(app);
+module.exports.handler = serverless(app);
 
 //DEBUG LOCAL TESTING
 // Uncomment the following lines to run the server locally for testing
-if (require.main === module) {
-  const PORT = process.env.PORT || 7000;
-  app.listen(PORT, () => console.log('Listening on', PORT));
-}
+//if (require.main === module) {
+//  const PORT = process.env.PORT || 7000;
+//  app.listen(PORT, () => console.log('Listening on', PORT));
+//}
