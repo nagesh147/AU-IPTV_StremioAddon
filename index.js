@@ -102,7 +102,7 @@ const fmtLocal = (s, tz) => {
   const d = parseTime(s);
   try {
     return new Intl.DateTimeFormat('en-AU', { timeZone: tz, hour: 'numeric', minute: '2-digit' }).format(d);
-  } catch { // tz missing in some envs
+  } catch {
     const hh12 = d.getHours() % 12 || 12;
     const mm2 = `${d.getMinutes()}`.padStart(2,'0');
     const ap = d.getHours() >= 12 ? 'pm' : 'am';
@@ -132,33 +132,23 @@ function isRegionalChannel(name = '', region = '') {
 }
 
 /* ----------------- AU classification + order --------------- */
-// “Other Channels” – include SBS specialty + misc FAST/shorts etc.
 function isOtherChannel(channelName) {
   const name = channelName.toUpperCase();
   const OTHER_CHANNELS = [
-    // ABC short-form/extra
     'ABC BUSINESS','ABC BUSINESS IN 90 SECONDS','ABC NEWS IN 90 SECONDS','ABC SPORT IN 90 SECONDS',
     'ABC WEATHER IN 90 SECONDS',
-    // SBS specialty
     'SBS ARABIC','SBS CHILL','SBS POPASIA','SBS RADIO 1','SBS RADIO 2','SBS RADIO 3',
     'SBS SOUTH ASIAN','SBS WORLD MOVIES','SBS WORLD WATCH','SBS WORLDWATCH','SBS FOOD','SBS VICELAND',
-    // extras
     '8 OUT OF 10 CATS'
   ];
   return OTHER_CHANNELS.includes(name);
 }
 
-// Traditional Australian TV channel patterns (main channels only)
 const TRADITIONAL_CHANNELS = [
-  // ABC family
   ['ABC TV','ABC','ABC NEWS','ABC ME','ABC KIDS','ABC TV PLUS','ABC ENTERTAINS','ABC FAMILY'],
-  // SBS core (keep “SBS” here; specialties are pushed to Other via isOtherChannel)
   ['SBS','NITV'],
-  // Seven
   ['SEVEN','7TWO','7MATE','7FLIX','7BRAVO','CHANNEL 7','NETWORK 7'],
-  // Nine
   ['NINE','9GEM','9GO','9GO!','9LIFE','9RUSH','CHANNEL 9'],
-  // Ten
   ['TEN','10','10 BOLD','10 PEACH','10 SHAKE','10 COMEDY','10 DRAMA','CHANNEL 10','NETWORK 10']
 ];
 
@@ -170,7 +160,6 @@ function isTraditionalChannel(name='') {
   return false;
 }
 
-// Traditional ordering to match the screenshots (approximate, case-insensitive)
 const AU_TRAD_ORDER = [
   'ABC ENTERTAINS','ABC FAMILY','ABC KIDS','ABC NEWS','ABC TV',
   'SBS','NITV',
@@ -184,7 +173,6 @@ function auTradOrderValue(name='') {
   for (const key of AU_TRAD_ORDER) {
     if (u.includes(key)) return AU_TRAD_INDEX.get(key);
   }
-  // unknowns go last but stable
   return 10000;
 }
 
@@ -206,81 +194,122 @@ const radioM3uUrlNZ = () => `${baseNZ()}/raw-radio.m3u8`;
 const epgUrlNZ      = () => `${baseNZ()}/epg.xml`;
 const logoNZUrl     = (id) => `${baseNZ()}/logo/${encodeURIComponent(id)}.png`;
 
-// UK (debug) sources
-const UK_PLAYLIST_URL = 'https://forgejo.plainrock127.xyz/Mystique-Play/Mystique/raw/branch/main/countries/united_kingdom.m3u';
+/* --------------------- UK Sports (no UHD) ------------------ */
+// UK Sports-only playlist (no Sky branding in HTML; channel names come from source)
+const UK_SPORTS_URL = 'https://forgejo.plainrock127.xyz/Mystique-Play/Mystique/raw/branch/main/countries/uk_sports.m3u';
 
-// UK caches
-if (!cache.uk_all)       cache.uk_all       = { ts: 0, channels: new Map() };
-if (!cache.uk_skySports) cache.uk_skySports = { ts: 0, channels: new Map() };
-if (!cache.uk_skyOther)  cache.uk_skyOther  = { ts: 0, channels: new Map() };
-
-// Helpers
-function isSkySportsName(name='') {
-  const s = String(name).toLowerCase();
-  return /\bsky\s*sports\b/.test(s);
-}
-function isSkyOtherName(name='') {
-  const s = String(name).toLowerCase();
-  return /\bsky\b/.test(s) && !isSkySportsName(name);
+// Stronger UHD detector (name or URL)
+function isUHD(name = '', url = '') {
+  const n = String(name);
+  const u = String(url);
+  return /\b(UHD|4K|2160p?)\b/i.test(n) || /\b(HEVC|H\.?265|Main10)\b/i.test(n) ||
+         /(2160|uhd|4k|hevc|main10|h\.?265)/i.test(u);
 }
 
+// Parse ALL entries (don’t collapse duplicates yet)
+function parseM3UEntries(text) {
+  const lines = text.split(/\r?\n/);
+  const out = [];
+  let meta = null;
+  for (const line of lines) {
+    if (line.startsWith('#EXTINF')) {
+      const name  = line.split(',').pop().trim();
+      const idm   = line.match(/tvg-id="([^"]+)"/i);
+      const logom = line.match(/tvg-logo="([^"]+)"/i);
+      meta = { id: idm ? idm[1] : name, name, logo: logom ? logom[1] : null };
+    } else if (meta && line && !line.startsWith('#')) {
+      out.push({ ...meta, url: line.trim() }); meta = null;
+    }
+  }
+  return out;
+}
+
+// Normalize for grouping: drop quality tags & provider prefixes (keep "Sky" in name)
+function baseNameUK(name = '') {
+  return String(name)
+    .replace(/^\s*(UKI?\s*\|\s*)/i, '')                 // "UK |", "UKI |"
+    .replace(/\b(UHD|4K|2160p?|FHD|1080p|HD|720p|SD)\b/ig, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+// Prefer non-UHD (FHD→HD→SD→unknown). Never keep UHD.
 async function getUKAllChannels() {
   if (fresh(cache.uk_all)) return cache.uk_all.channels;
-  const res = await fetch(UK_PLAYLIST_URL);
+
+  const res = await fetch(UK_SPORTS_URL, { cache: 'no-store' });
   const text = await res.text();
-  const chans = parseM3U(text);
-  cache.uk_all = { ts: Date.now(), channels: chans };
-  return chans;
+  const entries = parseM3UEntries(text);
+
+  const bestByBase = new Map();
+  const score = (name = '', url = '') => {
+    if (isUHD(name, url)) return -1; // reject UHD completely
+    const n = name.toLowerCase(), u = url.toLowerCase();
+    if (/fhd|1080/.test(n) || /1080/.test(u)) return 30;
+    if (/\bhd\b|720/.test(n) || /720/.test(u)) return 20;
+    if (/sd|576|480/.test(n) || /(576|480)/.test(u)) return 10;
+    return 15; // unknown quality – usually fine
+  };
+
+  for (const e of entries) {
+    const base = baseNameUK(e.name);
+    const s = score(e.name, e.url);
+    if (s < 0) continue; // UHD tossed
+    const prev = bestByBase.get(base);
+    if (!prev || s > prev._score) {
+      // Keep display name but strip explicit quality tags like "UHD/FHD/HD"
+      const displayName = e.name.replace(/\b(UHD|4K|2160p?|FHD|1080p|HD|720p|SD)\b/ig, '').replace(/\s{2,}/g,' ').trim();
+      bestByBase.set(base, { ...e, name: displayName, _score: s });
+    }
+  }
+
+  // Emit as a Map compatible with the rest of the addon
+  const channels = new Map();
+  for (const [base, e] of bestByBase) {
+    const key = e.id || base; // stable key
+    channels.set(key, { id: key, name: e.name, logo: e.logo, url: e.url });
+  }
+
+  cache.uk_all = { ts: Date.now(), channels };
+  return channels;
 }
 
-async function getUKSkySportsChannels() {
-  if (fresh(cache.uk_skySports)) return cache.uk_skySports.channels;
-  const all = await getUKAllChannels();
-  const kept = new Map();
-  for (const [id, ch] of all) if (isSkySportsName(ch?.name)) kept.set(id, ch);
-  cache.uk_skySports = { ts: Date.now(), channels: kept };
-  return kept;
-}
-
-async function getUKSkyOtherChannels() {
-  if (fresh(cache.uk_skyOther)) return cache.uk_skyOther.channels;
-  const all = await getUKAllChannels();
-  const kept = new Map();
-  for (const [id, ch] of all) if (isSkyOtherName(ch?.name)) kept.set(id, ch);
-  cache.uk_skyOther = { ts: Date.now(), channels: kept };
-  return kept;
-}
 
 /* ------------------------- FETCHERS ----------------------- */
 async function getChannels(region, kind = 'tv') {
   if (kind === 'radio') {
-    const c = cache.nz_radio_m3u.get('nz');
+    const key = `${region}:radio_m3u`;
+    const c = cache.radioM3u.get(key);
     if (c && fresh(c)) return c.channels;
 
     let channels = new Map();
     try {
-      const text = await (await fetch(radioM3uUrlNZ())).text();
+      const text = await (await fetch(radioM3uUrl(region))).text();   // AU radio for the selected city
       channels = parseM3U(text);
     } catch (_) {}
 
     if (!channels || channels.size === 0) {
       try {
-        const j = await (await fetch(radioJsonUrlNZ())).json();
+        const j = await (await fetch(radioJsonUrl(region))).json();   // AU radio JSON fallback
         channels = normalizeTVJson(j);
       } catch (_) {}
     }
 
-    cache.nz_radio_m3u.set('nz', { ts: Date.now(), channels });
+    cache.radioM3u.set(key, { ts: Date.now(), channels });
     return channels;
   }
+
   const key = `${region}:m3u`;
   const c = cache.m3u.get(key);
   if (c && fresh(c)) return c.channels;
+
   const text = await (await fetch(m3uUrl(region))).text();
   const channels = parseM3U(text);
+
   cache.m3u.set(key, { ts: Date.now(), channels });
   return channels;
 }
+
 
 async function getEPG(region) {
   const key = `${region}:epg`;
@@ -400,8 +429,8 @@ function buildManifest(selectedRegion, includeRadio) {
   };
 }
 
-// --- v2 manifest builder (add NZ + UK debug) ---
-function buildManifestV2(selectedRegion, includeRadio, includeNZ, nzDefault, includeUKSkySports=false, includeUKSkyOther=false) {
+// --- v2 manifest builder (AU + NZ + UK Sports) ---
+function buildManifestV2(selectedRegion, includeRadio, includeNZ, nzDefault, includeUKSports=false) {
   const catalogs = [];
 
   const genreOptions = [
@@ -426,8 +455,7 @@ function buildManifestV2(selectedRegion, includeRadio, includeNZ, nzDefault, inc
     }
   }
 
-  if (includeUKSkySports) genreOptions.push('UK Sky Sports');
-  if (includeUKSkyOther)    genreOptions.push('UK Sky Other Channels');
+  if (includeUKSports) genreOptions.push('UK Sports');
 
   const displayName = nzDefault ? 'NZ' : selectedRegion;
   catalogs.push({
@@ -437,11 +465,11 @@ function buildManifestV2(selectedRegion, includeRadio, includeNZ, nzDefault, inc
 
   return {
     id: 'com.joshargh.auiptv',
-    version: '2.2.0',
+    version: '2.3.0',
     name: `AU IPTV (${displayName})`,
     description: includeNZ
-      ? `Australian + NZ live streams with optional UK streams. Main city: ${selectedRegion}.`
-      : `Australian live TV and Radio with optional UK streams. Main city: ${selectedRegion}.`,
+      ? `Australian + NZ live streams with optional UK Sports. Main city: ${selectedRegion}.`
+      : `Australian live TV and Radio with optional UK Sports. Main city: ${selectedRegion}.`,
     types: ['tv'], catalogs, resources: ['catalog','meta','stream']
   };
 }
@@ -467,8 +495,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
   let contentKind   = 'tv';
   let catalogType   = 'traditional';
   let isNZ          = false;
-  let isUKSky       = false;
-  let isUKRaw       = false;
+  let isUKSports    = false;
 
   if (genreIs(selectedGenre, 'traditional channels', 'traditional')) {
     catalogType = 'traditional';
@@ -484,16 +511,17 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     isNZ = true; contentKind = 'tv'; catalogType = 'all';
   } else if (genreIs(selectedGenre, 'nz radio')) {
     isNZ = true; contentKind = 'radio';
-  } else if (genreIs(selectedGenre, 'uk sky sports')) { contentKind = 'tv'; isUKSky = true; catalogType = 'all'; } else if (genreIs(selectedGenre, 'uk sky other channels', 'uk sky other')) { contentKind = 'tv'; isUKRaw = true; catalogType = 'all'; } else {
+  } else if (genreIs(selectedGenre, 'uk sports', 'uk sport')) {
+    contentKind = 'tv'; isUKSports = true; catalogType = 'all';
+  } else {
     const cityName = genreCity(selectedGenre);
     if (cityName) { contentRegion = cityName; catalogType = 'all'; }
   }
 
-  const tz = isNZ ? 'Pacific/Auckland' : ((isUKSky || isUKRaw) ? 'Europe/London' : (REGION_TZ[contentRegion] || 'Australia/Sydney'));
+  const tz = isNZ ? 'Pacific/Auckland' : (isUKSports ? 'Europe/London' : (REGION_TZ[contentRegion] || 'Australia/Sydney'));
   let channels;
   if (isNZ) channels = await getNZChannels(contentKind);
-  else if (isUKSky) channels = await getUKSkySportsChannels();
-  else if (isUKRaw) channels = await getUKSkyOtherChannels();
+  else if (isUKSports) channels = await getUKAllChannels();
   else channels = await getChannels(contentRegion, contentKind);
 
   const epg = (contentKind === 'tv') ? (isNZ ? await getNZEPG() : new Map()) : new Map();
@@ -503,7 +531,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     if (contentKind === 'tv') {
       let includeChannel = true;
       let sortVal;
-      if (!isNZ && !isUKSky && !isUKRaw) {
+      if (!isNZ && !isUKSports) {
         const traditional = isTraditionalChannel(ch.name);
         const other = isOtherChannel(ch.name);
         const regional = isRegionalChannel(ch.name, contentRegion);
@@ -525,21 +553,20 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
       const nowp = nowProgramme(list);
       const release = nowp ? `${fmtLocal(nowp.start, tz)} | ${nowp.title}`
                            : (list[0] ? `${fmtLocal(list[0].start, tz)} | ${list[0].title}`
-                           : (isNZ ? 'Live NZ TV' : ((isUKSky || isUKRaw) ? 'Live UK' : 'Live TV')));
+                           : (isNZ ? 'Live NZ TV' : (isUKSports ? 'Live UK' : 'Live TV')));
 
       metas.push({
-        id: `au|${isNZ?'NZ':((isUKSky||isUKRaw)?'UK':contentRegion)}|${cid}|${contentKind}`,
+        id: `au|${isNZ?'NZ':(isUKSports?'UK':contentRegion)}|${cid}|${contentKind}`,
         type: 'tv',
         name: ch.name,
-        poster: logoAny(isNZ?'NZ':((isUKSky||isUKRaw)?'UK':contentRegion), ch),
-        description: isNZ ? 'New Zealand TV' : (isUKSky ? 'UK Sky Sports' : (isUKRaw ? 'UK Sky Other Channels' : (catalogType === 'regional' ? 'Regional AU TV' : 'Live AU TV'))),
+        poster: logoAny(isNZ?'NZ':(isUKSports?'UK':contentRegion), ch),
+        description: isNZ ? 'New Zealand TV' : (isUKSports ? 'UK Sports' : (catalogType === 'regional' ? 'Regional AU TV' : 'Live AU TV')),
         releaseInfo: release,
         _sortOrder: isNZ ? nzOrderValue(ch.name)
                          : (catalogType === 'traditional' ? (sortVal ?? 10000)
                          : (catalogType === 'regional' ? 0 : undefined))
       });
     } else {
-      // Radio entries
       metas.push({
         id: `au|${isNZ?'NZ':contentRegion}|${cid}|radio`,
         type: 'tv',
@@ -551,10 +578,9 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     }
   }
 
-  // Sorting
   if (isNZ) {
     metas.sort((a, b) => (a._sortOrder - b._sortOrder) || a.name.localeCompare(b.name));
-  } else if (!isUKSky && !isUKRaw && catalogType === 'traditional') {
+  } else if (!isUKSports && catalogType === 'traditional') {
     metas.sort((a, b) => (a._sortOrder - b._sortOrder) || a.name.localeCompare(b.name));
   } else {
     metas.sort((a, b) => a.name.localeCompare(b.name));
@@ -595,7 +621,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
       meta: {
         id, type: 'tv', name: ch.name,
         poster: logoAny(region, ch),
-        description: desc || (region === 'NZ' ? 'Live NZ television' : (region === 'UK' ? 'Live UK TV' : 'Live television streaming')),
+        description: desc || (region === 'NZ' ? 'Live NZ television' : (region === 'UK' ? 'UK Sports' : 'Live television streaming')),
         releaseInfo: nowp ? `${fmtLocal(nowp.start, tz)} - ${fmtLocal(nowp.stop, tz)} | ${nowp.title}` : (region === 'NZ' ? 'Live NZ TV' : (region === 'UK' ? 'Live UK TV' : 'Live TV')),
       }
     };
@@ -657,7 +683,6 @@ code{display:block;margin-top:10px;padding:10px 12px;background:#0f1115;border:1
 .stat-pill{border:1px solid var(--line);border-radius:999px;padding:6px 10px;background:#0f1115}
 .spacer{ flex:1 }
 .h1-installs{font-size:12px;line-height:1;border:1px solid var(--line);border-radius:999px;padding:4px 10px;background:#0f1115;color:var(--muted)}
-/* accordion matching this theme */
 details.acc{background:#0f1115;border:1px solid var(--line);border-radius:12px;margin:12px 0;overflow:hidden}
 details.acc>summary{cursor:pointer;padding:10px 12px;font-weight:700;color:var(--text);list-style:none}
 details.acc[open]>summary{border-bottom:1px solid var(--line)}
@@ -669,12 +694,13 @@ details.acc[open]>summary{border-bottom:1px solid var(--line)}
   <span class="spacer"></span>
   <span id="installs" class="h1-installs" aria-live="polite" title="Total installs">Installs: —</span>
 </h1>
-  <p class="lead">AU + NZ live TV & radio for Stremio. Pick your main city, then install. Use the <b>Genre</b> dropdown in Stremio to switch to NZ, Radio, other AU cities, or UK add-ons.</p>
+  <p class="lead">AU + NZ live TV & radio for Stremio. Pick your main city, then install. Use the <b>Genre</b> dropdown in Stremio to switch to NZ, Radio, other AU cities, or UK Sports.</p>
 
   <div class="announce">
-    <h4>🚀 What’s new in v2</h4>
+    <h4>🚀 What’s new in v2.3</h4>
     <ul>
-      <li>🇳🇿 NZ TV & Radio (optional) + curated NZ channel order</li>
+      <li>🏟️ UK Sports pack (optional) - UK & Sky Sports HD channels</li>
+      <li>📺 NZ TV & Radio (optional) + curated NZ channel order</li>
       <li>🧠 “Set NZ as default” hides the “None” genre and shows NZ first</li>
       <li>📺 Cleaner AU channel grouping (Traditional / Other / Regional)</li>
     </ul>
@@ -694,7 +720,6 @@ details.acc[open]>summary{border-bottom:1px solid var(--line)}
     <label><input type="checkbox" id="radio" checked> Include Radio</label>
   </div>
 
-  <!-- Accordion blocks -->
   <details class="acc" id="nzAcc">
     <summary>NZ Additional Streams</summary>
     <div class="acc-body">
@@ -706,11 +731,10 @@ details.acc[open]>summary{border-bottom:1px solid var(--line)}
   </details>
 
   <details class="acc" id="ukAcc">
-    <summary>UK Additional Streams</summary>
+    <summary>UK Sports (optional)</summary>
     <div class="acc-body">
       <div class="row" id="ukRow">
-        <label style="margin-left:12px"><input type="checkbox" id="ukSkySports"> UK Sky Sports</label>
-        <label style="margin-left:12px"><input type="checkbox" id="ukSkyOther"> UK Sky Other Channels</label>
+        <label style="margin-left:12px"><input type="checkbox" id="ukSports"> UK Sports</label>
       </div>
     </div>
   </details>
@@ -725,7 +749,7 @@ details.acc[open]>summary{border-bottom:1px solid var(--line)}
       <li><strong>Radio</strong> — if enabled</li>
       <li><strong>[City] TV</strong> — other AU cities</li>
       <li><strong>NZ TV / NZ Radio</strong> — when NZ is enabled</li>
-      <li><strong>UK Sky Sports / UK Sky Other</strong> — when UK is enabled</li>
+      <li><strong>UK Sports</strong> — when enabled</li>
     </ul>
   </div>
 
@@ -774,8 +798,7 @@ function pathPrefix() {
     parts.push('nz');
     if ($('#nzDefault').checked) parts.push('nzdefault');
   }
-  if ($('#ukSkySports')?.checked) parts.push('ukskysports');
-  if ($('#ukSkyOther')?.checked)  parts.push('ukskyother');
+  if ($('#ukSports')?.checked) parts.push('uksports');
   return '/' + parts.join('/');
 }
 
@@ -801,8 +824,7 @@ $('#region').addEventListener('change', () => {
 
 $('#nz').addEventListener('change', update);
 $('#radio').addEventListener('change', update);
-$('#ukSkySports').addEventListener('change', update);
-$('#ukSkyOther').addEventListener('change', update);
+$('#ukSports').addEventListener('change', update);
 
 $('#nzDefault').addEventListener('change', () => {
   if ($('#nzDefault').checked && !$('#nz').checked) {
@@ -896,18 +918,19 @@ function manifestResponderV2(req, res) {
     const includeRadio = /\/radio(\/|$)/.test(req.path);
     const includeNZ    = /\/nz(\/|$)/.test(req.path);
     const nzDefault    = /\/nzdefault(\/|$)/.test(req.path);
-    const includeUKSkySports = /\/ukskysports(\/|$)/.test(req.path);
-    const includeUKSkyOther  = /\/ukskyother(\/|$)/.test(req.path);
+    // Accept legacy /ukskysports and /ukskyother but treat both as UK Sports
+    const includeUKSports = /\/uksports(\/|$)|\/ukskysports(\/|$)|\/ukskyother(\/|$)/.test(req.path);
 
-    res.json(buildManifestV2(region, includeRadio, includeNZ, nzDefault, includeUKSkySports, includeUKSkyOther));
+    res.json(buildManifestV2(region, includeRadio, includeNZ, nzDefault, includeUKSports));
   } catch (e) {
     console.error('manifest v2 error', e);
     res.status(500).json({ error: e?.message || String(e) });
   }
 }
 
-// Accepts /:region[/radio][/nz][/nzdefault][/ukskysports][/ukskyother]/manifest.json
-app.get(/^\/[^/]+(?:\/radio)?(?:\/nz)?(?:\/nzdefault)?(?:\/ukskysports)?(?:\/ukskyother)?(?:\/ukcustom\/[^/]+)?\/manifest\.json$/, manifestResponderV2);
+// Accepts /:region[/radio][/nz][/nzdefault][/uksports]/manifest.json
+// (legacy: also allows /ukskysports and /ukskyother but both map to Sports)
+app.get(/^\/[^/]+(?:\/radio)?(?:\/nz)?(?:\/nzdefault)?(?:\/uksports|\/ukskysports|\/ukskyother)?(?:\/ukcustom\/[^/]+)?\/manifest\.json$/, manifestResponderV2);
 
 function manifestResponder(req, res) {
   try {
@@ -938,8 +961,11 @@ app.use((req, res, next) => {
 });
 app.use('/', sdkRouter);
 
+//Online Enable Addon
 //module.exports.handler = serverless(app);
 
+//DEBUG LOCAL TESTING
+// Uncomment the following lines to run the server locally for testing
 if (require.main === module) {
   const PORT = process.env.PORT || 7000;
   app.listen(PORT, () => console.log('Listening on', PORT));
