@@ -854,7 +854,12 @@ function setRegion(val){
   return false;
 }
 
-function region() { return encodeURIComponent(($('#region').value||'Brisbane').trim()); }
+// Never emit "New Zealand" as :region in the URL (backend expects AU city there)
+function region() {
+  const raw = ($('#region').value || 'Brisbane').trim();
+  const auRegion = (raw === 'New Zealand') ? lastAuCity : raw;
+  return encodeURIComponent(auRegion);
+}
 
 function pathPrefix() {
   const parts = [region()];
@@ -892,20 +897,49 @@ $('#region').addEventListener('change', () => {
 $('#nz').addEventListener('change', update);
 $('#radio').addEventListener('change', update);
 
+// Don't force-select "New Zealand" in the dropdown; just ensure NZ is enabled
 $('#nzDefault').addEventListener('change', () => {
-  if ($('#nzDefault').checked) {
-    if (!$('#nz').checked) $('#nz').checked = true;
-    setRegion('New Zealand');
-  } else {
-    if ($('#region').value === 'New Zealand' && lastAuCity) setRegion(lastAuCity);
+  if ($('#nzDefault').checked && !$('#nz').checked) {
+    $('#nz').checked = true;
   }
   update();
 });
 
-$('#open').addEventListener('click', () => window.open(webInstall(manifestUrl()), '_blank', 'noopener,noreferrer'));
+// Copy helper
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // fallback for older browsers
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'absolute';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch {}
+    document.body.removeChild(ta);
+  }
+}
+
+// Buttons: copy URL first, then open
+$('#open').addEventListener('click', async () => {
+  update();
+  const m = manifestUrl();
+  await copyToClipboard(m);
+  window.open(webInstall(m), '_blank', 'noopener,noreferrer');
+});
+
+$('#manifestLink').addEventListener('click', async (e) => {
+  e.preventDefault();
+  update();
+  const m = manifestUrl();
+  await copyToClipboard(m);
+  window.open(m, '_blank', 'noopener,noreferrer');
+});
 
 // installs ticker
-
 setInterval(refreshStats, 5000);
 refreshStats();
 
@@ -924,8 +958,8 @@ async function refreshStats(){
     el.setAttribute('aria-label', n.toLocaleString() + ' total installs');
   } catch(_) {}
 }
-
 </script>
+
 </body></html>`;
 
 
