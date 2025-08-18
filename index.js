@@ -3,6 +3,7 @@ const express = require('express');
 const serverless = require('serverless-http');
 const { addonBuilder, getRouter } = require('stremio-addon-sdk');
 const xml2js = require('xml2js');
+const path = require('path');
 
 // native fetch (Node 18+), fallback to node-fetch
 const fetch = globalThis.fetch
@@ -20,11 +21,20 @@ const REGION_TZ = {
   Perth: 'Australia/Perth', Sydney: 'Australia/Sydney'
 };
 
+// Seedable, in-memory installs counter
+const STATS_SEED = Number(process.env.STATS_SEED || 498);
+let _memStats = { installs: STATS_SEED };
+
 /* cache */
 const CACHE_TTL = 15 * 60 * 1000; // 15 min
 const cache = { m3u: new Map(), epg: new Map(), json: new Map(), radio: new Map(), radioM3u: new Map() };
 const fresh = (entry) => entry && (Date.now() - entry.ts) < CACHE_TTL;
 const validRegion = (r) => (REGIONS.includes(r) ? r : DEFAULT_REGION);
+
+// Simple in-memory install bump (no S3, no dedupe)
+function markInstall(_req) {
+  _memStats.installs = (_memStats.installs || 0) + 1;
+}
 
 /* ------------------------- PARSERS ------------------------- */
 function parseM3U(text) {
@@ -34,8 +44,8 @@ function parseM3U(text) {
   for (const line of lines) {
     if (line.startsWith('#EXTINF')) {
       const name = line.split(',').pop().trim();
-      const idm  = line.match(/tvg-id="([^"]+)"/);
-      const logom= line.match(/tvg-logo="([^"]+)"/);
+      const idm  = line.match(/tvg-id="([^"]+)"/i);
+      const logom= line.match(/tvg-logo="([^"]+)"/i);
       cur = { id: idm ? idm[1] : name, name, logo: logom ? logom[1] : null };
     } else if (cur && line && !line.startsWith('#')) {
       channels.set(cur.id, { ...cur, url: line }); cur = null;
@@ -74,8 +84,8 @@ function parseEPG(xml) {
       const progs = res?.tv?.programme || [];
       for (const p of progs) {
         const cid = p.$?.channel || '';
-        theStart = p.$?.start || '';
-        theStop  = p.$?.stop  || '';
+        const theStart = p.$?.start || '';
+        const theStop  = p.$?.stop  || '';
         const title = (Array.isArray(p.title) ? p.title[0] : p.title) || '';
         if (!map.has(cid)) map.set(cid, []);
         map.get(cid).push({ start: theStart, stop: theStop, title });
@@ -132,36 +142,28 @@ function isRegionalChannel(name = '', region = '') {
 }
 
 /* ----------------- AU classification + order --------------- */
-// “Other Channels” – include SBS specialty + misc FAST/shorts etc.
 function isOtherChannel(channelName = '') {
   const u = String(channelName).toUpperCase();
-  // keep digits, letters, spaces; turn punctuation (incl. “/” and “?”) into spaces
   const normalized = u.replace(/[^A-Z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
 
   const OTHER_CHANNELS = [
-    // ABC short-form/extra
     'ABC BUSINESS','ABC BUSINESS IN 90 SECONDS','ABC NEWS IN 90 SECONDS','ABC SPORT IN 90 SECONDS',
     'ABC WEATHER IN 90 SECONDS',
-    // SBS specialty
     'SBS ARABIC','SBS CHILL','SBS POPASIA','SBS RADIO 1','SBS RADIO 2','SBS RADIO 3',
     'SBS SOUTH ASIAN','SBS WORLD MOVIES','SBS WORLD WATCH','SBS WORLDWATCH','SBS FOOD','SBS VICELAND',
-    // extras
-    '8 OUT OF 10 CATS' // always in Others
+    '8 OUT OF 10 CATS'
   ];
   if (OTHER_CHANNELS.includes(u)) return true;
 
-  // HYBPA? (full title + shorthand)
   if (/\bHAVE YOU BEEN PAYING ATTENTION\b/.test(normalized)) return true;
   if (/\bHYBPA\b/.test(normalized)) return true;
 
-  // 8 Out of 10 Cats (+ Does Countdown) — robust matching
   if (/(?:\b8\b|\bEIGHT\b)\s*(?:OUT\s*OF\s*)?\b10\b\s*CATS(?:\s*DOES\s*COUNTDOWN)?\b/.test(normalized)) {
     return true;
   }
 
   return false;
 }
-
 
 const TRADITIONAL_CHANNELS = [
   ['ABC TV','ABC','ABC NEWS','ABC ME','ABC KIDS','ABC TV PLUS','ABC ENTERTAINS','ABC FAMILY'],
@@ -195,7 +197,7 @@ function auTradOrderValue(name='') {
   return 10000;
 }
 
-//AU BASE
+// AU BASE
 const base = (region) => `https://i.mjh.nz/au/${encodeURIComponent(region)}`;
 const tvJsonUrl    = (region) => `${base(region)}/tv.json`;
 const radioJsonUrl = (region) => `${base(region)}/radio.json`;
@@ -204,7 +206,7 @@ const radioM3uUrl  = (region) => `${base(region)}/raw-radio.m3u8`;
 const epgUrl       = (region) => `${base(region)}/epg.xml`;
 const logoUrl      = (region, id) => `${base(region)}/logo/${encodeURIComponent(id)}.png`;
 
-//NZ BASE
+// NZ BASE
 const baseNZ        = () => `https://i.mjh.nz/nz`;
 const tvJsonUrlNZ   = () => `${baseNZ()}/tv.json`;
 const radioJsonUrlNZ= () => `${baseNZ()}/radio.json`;
@@ -214,10 +216,8 @@ const epgUrlNZ      = () => `${baseNZ()}/epg.xml`;
 const logoNZUrl     = (id) => `${baseNZ()}/logo/${encodeURIComponent(id)}.png`;
 
 /* --------------------- UK Sports (no UHD) ------------------ */
-// UK Sports-only playlist (no Sky branding in HTML; channel names come from source)
 const UK_SPORTS_URL = 'https://forgejo.plainrock127.xyz/Mystique-Play/Mystique/raw/branch/main/countries/uk_sports.m3u';
 
-// Stronger UHD detector (name or URL)
 function isUHD(name = '', url = '') {
   const n = String(name);
   const u = String(url);
@@ -225,7 +225,6 @@ function isUHD(name = '', url = '') {
          /(2160|uhd|4k|hevc|main10|h\.?265)/i.test(u);
 }
 
-// Parse ALL entries (don’t collapse duplicates yet)
 function parseM3UEntries(text) {
   const lines = text.split(/\r?\n/);
   const out = [];
@@ -243,16 +242,14 @@ function parseM3UEntries(text) {
   return out;
 }
 
-// Normalize for grouping: drop quality tags & provider prefixes (keep "Sky" in name)
 function baseNameUK(name = '') {
   return String(name)
-    .replace(/^\s*(UKI?\s*\|\s*)/i, '')                 // "UK |", "UKI |"
+    .replace(/^\s*(UKI?\s*\|\s*)/i, '')
     .replace(/\b(UHD|4K|2160p?|FHD|1080p|HD|720p|SD)\b/ig, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
 }
 
-// Prefer non-UHD (FHD→HD→SD→unknown). Never keep UHD.
 async function getUKAllChannels() {
   if (fresh(cache.uk_all)) return cache.uk_all.channels;
 
@@ -262,37 +259,34 @@ async function getUKAllChannels() {
 
   const bestByBase = new Map();
   const score = (name = '', url = '') => {
-    if (isUHD(name, url)) return -1; // reject UHD completely
+    if (isUHD(name, url)) return -1;
     const n = name.toLowerCase(), u = url.toLowerCase();
     if (/fhd|1080/.test(n) || /1080/.test(u)) return 30;
     if (/\bhd\b|720/.test(n) || /720/.test(u)) return 20;
     if (/sd|576|480/.test(n) || /(576|480)/.test(u)) return 10;
-    return 15; // unknown quality – usually fine
+    return 15;
   };
 
   for (const e of entries) {
     const base = baseNameUK(e.name);
     const s = score(e.name, e.url);
-    if (s < 0) continue; // UHD tossed
+    if (s < 0) continue;
     const prev = bestByBase.get(base);
     if (!prev || s > prev._score) {
-      // Keep display name but strip explicit quality tags like "UHD/FHD/HD"
       const displayName = e.name.replace(/\b(UHD|4K|2160p?|FHD|1080p|HD|720p|SD)\b/ig, '').replace(/\s{2,}/g,' ').trim();
       bestByBase.set(base, { ...e, name: displayName, _score: s });
     }
   }
 
-  // Emit as a Map compatible with the rest of the addon
   const channels = new Map();
   for (const [base, e] of bestByBase) {
-    const key = e.id || base; // stable key
+    const key = e.id || base;
     channels.set(key, { id: key, name: e.name, logo: e.logo, url: e.url });
   }
 
   cache.uk_all = { ts: Date.now(), channels };
   return channels;
 }
-
 
 /* ------------------------- FETCHERS ----------------------- */
 async function getChannels(region, kind = 'tv') {
@@ -303,13 +297,13 @@ async function getChannels(region, kind = 'tv') {
 
     let channels = new Map();
     try {
-      const text = await (await fetch(radioM3uUrl(region))).text();   // AU radio for the selected city
+      const text = await (await fetch(radioM3uUrl(region))).text();
       channels = parseM3U(text);
     } catch (_) {}
 
     if (!channels || channels.size === 0) {
       try {
-        const j = await (await fetch(radioJsonUrl(region))).json();   // AU radio JSON fallback
+        const j = await (await fetch(radioJsonUrl(region))).json();
         channels = normalizeTVJson(j);
       } catch (_) {}
     }
@@ -328,7 +322,6 @@ async function getChannels(region, kind = 'tv') {
   cache.m3u.set(key, { ts: Date.now(), channels });
   return channels;
 }
-
 
 async function getEPG(region) {
   const key = `${region}:epg`;
@@ -433,10 +426,7 @@ function buildManifest(selectedRegion, includeRadio) {
     type: 'tv',
     id: `au_tv_${selectedRegion}`,
     name: `AU TV - ${selectedRegion}`,
-    extra: [
-      { name: 'search' },
-      { name: 'genre', options: genreOptions, isRequired: false }
-    ]
+    extra: [ { name: 'search' }, { name: 'genre', options: genreOptions, isRequired: false } ]
   });
 
   return {
@@ -609,7 +599,6 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
   return { metas };
 });
 
-
 function parseItemId(id) {
   const p = String(id||'').split('|');
   if (p.length < 3 || p[0] !== 'au') return null;
@@ -618,7 +607,6 @@ function parseItemId(id) {
   const kind = (kindRaw === 'radio' ? 'radio' : 'tv');
   return { region, cid, kind };
 }
-
 
 builder.defineMetaHandler(async ({ type, id }) => {
   if (type !== 'tv') return { meta: {} };
@@ -656,7 +644,6 @@ builder.defineMetaHandler(async ({ type, id }) => {
   }
 });
 
-
 builder.defineStreamHandler(async ({ type, id }) => {
   if (type !== 'tv') return { streams: [] };
   const parsed = parseItemId(id);
@@ -669,10 +656,10 @@ builder.defineStreamHandler(async ({ type, id }) => {
   return { streams: [{ url: ch.url, title: 'Play' }] };
 });
 
-
 /* ----------------------- LANDING PAGE --------------------- */
 const CONFIG_HTML = `<!DOCTYPE html><html lang="en"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<link rel="icon" href="/AUIPTVLOGO.svg" type="image/svg+xml" sizes="any">
 <title>AU IPTV v2</title><meta http-equiv="Cache-Control" content="no-store"/>
 <style>
 :root{color-scheme:dark;--bg:#0b0c0f;--card:#14161a;--muted:#9aa4b2;--text:#ecf2ff;--ok:#34c759;--okText:#04210d;--line:#22252b;--accent:#4fc3f7}
@@ -709,10 +696,12 @@ details.acc[open]>summary{border-bottom:1px solid var(--line)}
 </style></head><body>
 <div class="wrap"><div class="card">
 <h1>
+  <img src="/AUIPTVLOGO.svg" alt="" style="height:24px"/>
   AU IPTV <span class="badge">v2</span>
   <span class="spacer"></span>
   <span id="installs" class="h1-installs" aria-live="polite" title="Total installs">Installs: —</span>
 </h1>
+
   <p class="lead">AU + NZ live TV & radio for Stremio. Pick your main city, then install. Use the <b>Genre</b> dropdown in Stremio to switch to NZ, Radio, other AU cities, or UK Sports.</p>
 
   <div class="announce">
@@ -895,7 +884,7 @@ $('#copy').addEventListener('click', async () => {
 let installsTimer = null;
 function startStats(){
   if (installsTimer) return;
-  installsTimer = setInterval(refreshStats, 5000);
+  installsTimer = setInterval(refreshStats, 60000);
 }
 async function refreshStats(){
   try{
@@ -928,8 +917,29 @@ app.use((req, res, next) => {
 app.get('/healthz', (_req, res) => res.type('text/plain').send('ok'));
 app.get('/', (_req, res) => res.type('html').send(CONFIG_HTML));
 
+// stats endpoint for landing page — in-memory only
+app.get('/stats', (_req, res) => {
+  res.json({ installs: _memStats.installs || 0 });
+});
+
+// serve logo + favicon aliases
+app.get(['/AUIPTVLOGO.svg','/favicon.svg'], (_req, res) => {
+  res.type('image/svg+xml').sendFile(path.join(__dirname, 'AUIPTVLOGO.svg'));
+});
+app.get('/favicon.ico', (_req, res) => res.redirect(302, '/AUIPTVLOGO.svg'));
+
+// helper to build absolute base URL (for manifest logo)
+function baseUrl(req) {
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+  const host  = req.headers['x-forwarded-host']  || req.headers.host;
+  return `${proto}://${host}`;
+}
+
 function manifestResponderV2(req, res) {
   try {
+    // count install on any v2 manifest fetch
+    markInstall(req);
+
     const m = req.path.match(/^\/([^/]+)/);
     const regionRaw = decodeURIComponent(m ? m[1] : DEFAULT_REGION);
     const region = validRegion(regionRaw);
@@ -937,10 +947,11 @@ function manifestResponderV2(req, res) {
     const includeRadio = /\/radio(\/|$)/.test(req.path);
     const includeNZ    = /\/nz(\/|$)/.test(req.path);
     const nzDefault    = /\/nzdefault(\/|$)/.test(req.path);
-    // Accept legacy /ukskysports and /ukskyother but treat both as UK Sports
     const includeUKSports = /\/uksports(\/|$)|\/ukskysports(\/|$)|\/ukskyother(\/|$)/.test(req.path);
 
-    res.json(buildManifestV2(region, includeRadio, includeNZ, nzDefault, includeUKSports));
+    const man = buildManifestV2(region, includeRadio, includeNZ, nzDefault, includeUKSports);
+    man.logo = man.icon = `${baseUrl(req)}/AUIPTVLOGO.svg`;
+    res.json(man);
   } catch (e) {
     console.error('manifest v2 error', e);
     res.status(500).json({ error: e?.message || String(e) });
@@ -953,9 +964,14 @@ app.get(/^\/[^/]+(?:\/radio)?(?:\/nz)?(?:\/nzdefault)?(?:\/uksports|\/ukskysport
 
 function manifestResponder(req, res) {
   try {
+    // count install on legacy manifests too
+    markInstall(req);
+
     const region = validRegion(req.params.region);
     const includeRadio = /\/radio(\/|$)/.test(req.path);
-    res.json(buildManifest(region, includeRadio));
+    const man = buildManifest(region, includeRadio);
+    man.logo = man.icon = `${baseUrl(req)}/AUIPTVLOGO.svg`;
+    res.json(man);
   } catch (e) {
     console.error('manifest error', e);
     res.status(500).json({ error: e?.message || String(e) });
@@ -965,7 +981,11 @@ function manifestResponder(req, res) {
 app.get('/:region/manifest.json', manifestResponder);
 app.get('/:region/radio/manifest.json', manifestResponder);
 
-app.get('/manifest.json', (_req, res) => res.json(buildManifest(DEFAULT_REGION, true)));
+app.get('/manifest.json', (req, res) => {
+  const man = buildManifest(DEFAULT_REGION, true);
+  man.logo = man.icon = `${baseUrl(req)}/AUIPTVLOGO.svg`;
+  res.json(man);
+});
 
 const sdkRouter = getRouter(builder.getInterface());
 app.use((req, res, next) => {
@@ -980,12 +1000,11 @@ app.use((req, res, next) => {
 });
 app.use('/', sdkRouter);
 
-//Online Enable Addon
+// Export for AWS Lambda
 module.exports.handler = serverless(app);
 
-//DEBUG LOCAL TESTING
-// Uncomment the following lines to run the server locally for testing
-//if (require.main === module) {
-//  const PORT = process.env.PORT || 7000;
-//  app.listen(PORT, () => console.log('Listening on', PORT));
-//}
+// Local dev server (optional)
+if (require.main === module) {
+  const PORT = process.env.PORT || 7000;
+  app.listen(PORT, () => console.log('Listening on', PORT));
+}

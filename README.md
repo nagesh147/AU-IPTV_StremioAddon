@@ -26,10 +26,9 @@ npm start
 
 The server will start on:
 
-arduino
-Copy
-Edit
+
 http://localhost:7000
+
 🌐 Deploying
 You can run this anywhere Node.js works — including:
 
@@ -40,14 +39,13 @@ VPS (Linux/Windows)
 Free serverless hosting (Vercel, Netlify, Render, AWS Lambda, etc.)
 
 📥 Installing in Stremio
+
 Option 1 – Web installer
 
 Go to your add-on’s landing page in a browser:
 
-arduino
-Copy
-Edit
 http://localhost:7000
+
 Select your region & preferences.
 
 Click Open in Stremio Web or Open in Stremio App.
@@ -78,7 +76,19 @@ EPG/Logos/Channels pulled live from i.mjh.nz
 
 To restart after edits:
 
-bash
-Copy
-Edit
 npm start
+
+//To change between hosting local and online change the last 9 lines of index either comment out or in what is required
+
+example below:
+
+//ONLINE SERVERLESS ENABLED ADDON
+//Online Enable Addon comment out below line local debugging/testing
+module.exports.handler = serverless(app);
+
+//DEBUG LOCAL TESTING
+// Uncomment the following lines to run the server locally for testing this will spin up on http://localhost:7000
+//if (require.main === module) {
+//  const PORT = process.env.PORT || 7000;
+//  app.listen(PORT, () => console.log('Listening on', PORT));
+//}
