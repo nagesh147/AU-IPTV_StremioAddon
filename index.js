@@ -695,11 +695,17 @@ details.acc[open]>summary{border-bottom:1px solid var(--line)}
 .acc-body{padding:10px 12px}
 </style></head><body>
 <div class="wrap"><div class="card">
+
+<h1 style="display:flex; justify-content:center; align-items:center">
+  <img src="/AUIPTVLOGO.svg" alt="" style="height:256px"/>
+</h1>
+
 <h1>
-  <img src="/AUIPTVLOGO.svg" alt="" style="height:24px"/>
   AU IPTV <span class="badge">v2</span>
   <span class="spacer"></span>
-  <span id="installs" class="h1-installs" aria-live="polite" title="Total installs">Installs: —</span>
+  <span id="installs" class="h1-installs" aria-live="polite" title="Total installs">
+    Installs: —
+  </span>
 </h1>
 
   <p class="lead">AU + NZ live TV & radio for Stremio. Pick your main city, then install. Use the <b>Genre</b> dropdown in Stremio to switch to NZ, Radio, other AU cities, or UK Sports.</p>
@@ -927,6 +933,7 @@ app.get(['/AUIPTVLOGO.svg','/favicon.svg'], (_req, res) => {
   res.type('image/svg+xml').sendFile(path.join(__dirname, 'AUIPTVLOGO.svg'));
 });
 app.get('/favicon.ico', (_req, res) => res.redirect(302, '/AUIPTVLOGO.svg'));
+
 
 // helper to build absolute base URL (for manifest logo)
 function baseUrl(req) {
