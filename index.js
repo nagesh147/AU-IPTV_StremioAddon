@@ -21,6 +21,14 @@ const REGION_TZ = {
   Perth: 'Australia/Perth', Sydney: 'Australia/Sydney'
 };
 
+// --- stremio-addons.net signature (optional) ---
+const STREMIO_ADDONS_CONFIG = {
+  issuer: 'https://stremio-addons.net',
+  signature: process.env.STREMIO_ADDONS_SIGNATURE
+    || 'eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2In0..jPqqSM-s0k525D13Y_oqXA.Hz3vTlruk-WxtkneysiM4Eq9sAuCSNcW_77QHAdRFocIAbom2Ju8lhwpSI0W8aEtMeqefAV4i46N7Z5452wqPfJZZHzJ9OVcDtDTqaGxi33Znt68CD8oZqQOalnRrC2x.qR2mVkk9v112anUUgUoFCQ'
+};
+
+
 // Seedable, in-memory installs counter
 const STATS_SEED = Number(process.env.STATS_SEED || 498);
 let _memStats = { installs: STATS_SEED };
@@ -1069,13 +1077,11 @@ function parseFlagsFromPath(reqPath) {
 
 function manifestResponderV2(req, res) {
   try {
-    // count install on any manifest fetch
     markInstall(req);
-
     const { regionRaw, flags } = parseFlagsFromPath(req.path);
     const region = validRegion(regionRaw);
 
-    const opts = {
+    const man = buildManifestV3(region, {
       auTV: !flags.has('noau'),
       radio: flags.has('radio'),
       nzTV: flags.has('nz'),
@@ -1092,16 +1098,17 @@ function manifestResponderV2(req, res) {
       eusports: flags.has('eusports'),
       worldsports: flags.has('worldsports'),
       epl: flags.has('epl')
-    };
+    });
 
-    const man = buildManifestV3(region, opts);
     man.logo = man.icon = `${baseUrl(req)}/AUIPTVLOGO.svg`;
+    man.stremioAddonsConfig = STREMIO_ADDONS_CONFIG; // ← add here
     res.json(man);
   } catch (e) {
     console.error('manifest v3 error', e);
     res.status(500).json({ error: e?.message || String(e) });
   }
 }
+
 
 // Accepts /:region/[flags...]/manifest.json
 app.get(/^\/[^/]+(?:\/[^/]+)*\/manifest\.json$/, manifestResponderV2);
@@ -1137,6 +1144,7 @@ function manifestResponderLegacy(req, res) {
     const includeRadio = /\/radio(\/|$)/.test(req.path);
     const man = buildManifestV1(region, includeRadio);
     man.logo = man.icon = `${baseUrl(req)}/AUIPTVLOGO.svg`;
+    man.stremioAddonsConfig = STREMIO_ADDONS_CONFIG; // ← add here
     res.json(man);
   } catch (e) {
     console.error('manifest legacy error', e);
@@ -1144,14 +1152,17 @@ function manifestResponderLegacy(req, res) {
   }
 }
 
+
 app.get('/:region/manifest.json', manifestResponderLegacy);
 app.get('/:region/radio/manifest.json', manifestResponderLegacy);
 
 app.get('/manifest.json', (req, res) => {
   const man = buildManifestV3(DEFAULT_REGION, { auTV: true, radio: true });
   man.logo = man.icon = `${baseUrl(req)}/AUIPTVLOGO.svg`;
+  man.stremioAddonsConfig = STREMIO_ADDONS_CONFIG; // ← and here
   res.json(man);
 });
+
 
 const sdkRouter = getRouter(builder.getInterface());
 app.use((req, res, next) => {

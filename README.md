@@ -1,4 +1,4 @@
-# AU IPTV (EPG + Logos + Networks)
+# AU IPTV (EPG + Logos + Networks + Sports)
 
 A Stremio add-on that provides Australian IPTV streams with:
 - EPG (Electronic Program Guide)
@@ -6,7 +6,7 @@ A Stremio add-on that provides Australian IPTV streams with:
 - Network filtering
 - Separate TV and Radio catalogs
 
-Data sourced from [Matt Huisman’s AU IPTV](https://i.mjh.nz/au/).
+Data sourced from [Matt Huisman’s AU IPTV](https://i.mjh.nz/au/) & A1x
 
 ---
 
