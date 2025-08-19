@@ -1,4 +1,4 @@
-# AU IPTV (EPG + Logos + Networks + Sports)
+# AU IPTV (LIVE TV - EPG + Logos + Networks + Sports)
 
 A Stremio add-on that provides Australian IPTV streams with:
 - EPG (Electronic Program Guide)

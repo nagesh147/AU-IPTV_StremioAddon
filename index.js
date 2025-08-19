@@ -908,7 +908,10 @@ details.acc[open]>summary{border-bottom:1px solid var(--line)}
 <div class="hint">Web installer: <span id="weburl">—</span></div>
 
 </div>
+<!-- Ko-fi floating support widget -->
 <div class="cta" style="display:flex;gap:10px;margin-top:10px">
+  <a href="https://www.buymeacoffee.com/joshargh"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=&slug=joshargh&button_colour=34c759&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=FFDD00" /></a>
+<script type='text/javascript' src='https://storage.ko-fi.com/cdn/widget/Widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Support me on Ko-fi', '#9673f5', 'U7U21JXCOA');kofiwidget2.draw();</script> 
   <a class="btn btn-primary" href="https://hook.up.me/joshargh" target="_blank" rel="noopener noreferrer">☕ Get $10 free coffee (on me)</a>
   <a class="btn" href="http://paypal.me/joshargh" target="_blank" rel="noopener noreferrer">💸 Help with server costs (PayPal)</a>
 </div>
