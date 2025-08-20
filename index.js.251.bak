@@ -1,4 +1,4 @@
-// index.js — AU IPTV (AU+NZ with selectable US/UK/CA TV & Sports) — v2.6.0 Curated + Multi-Quality Streams
+// index.js — AU IPTV (AU+NZ with selectable US/UK/CA TV & Sports) — v2.5.1 Curated
 const express = require('express');
 const serverless = require('serverless-http');
 const { addonBuilder, getRouter } = require('stremio-addon-sdk');
@@ -136,9 +136,10 @@ function parseEPG(xml) {
 }
 
 function parseTime(s) {
+  // supports EPG "YYYYMMDDHHmmss Z" or ISO; fallback to Date(s)
   if (/^\d{14}\s+[+\-]\d{4}$/.test(s)) {
     const y=+s.slice(0,4), mo=+s.slice(4,6)-1, d=+s.slice(6,8), h=+s.slice(8,10), m=+s.slice(10,12), sec=+s.slice(12,14);
-    const off = s.slice(15);
+    const off = s.slice(15); // like +1000
     const sign = off[0] === '-' ? -1 : 1;
     const offMin = sign * (parseInt(off.slice(1,3))*60 + parseInt(off.slice(3,5)));
     return new Date(Date.UTC(y,mo,d,h,m,sec) - offMin*60000);
@@ -261,32 +262,10 @@ const A1X_CURATED_DIRECT  = 'https://raw.githubusercontent.com/a1xmedia/m3u/refs
 /* -------------- UK Sports tertiary fallback (legacy) ---------- */
 const UK_SPORTS_FALLBACK = 'https://forgejo.plainrock127.xyz/Mystique-Play/Mystique/raw/branch/main/countries/uk_sports.m3u';
 
-/* ---------- Quality helpers (for curated multi-variant) --------- */
-function norm(s='') { return String(s||'').toLowerCase(); }
 function isUHD(name = '', url = '') {
-  const n = norm(name), u = norm(url);
-  return /\b(uhd|4k|2160p?)\b/.test(n) || /(2160|uhd|4k|hevc|main10|h\.?265)/.test(u);
-}
-function isFHD(name = '', url = '') {
-  const s = norm(name + ' ' + url);
-  return /\b(fhd|1080p?)\b/.test(s) || /(?:^|[^0-9])1080(?:[^0-9]|$)/.test(s);
-}
-function isHD(name = '', url = '') {
-  const s = norm(name + ' ' + url);
-  return /\bhd\b/.test(s) || /\b720p?\b/.test(s) || /(?:^|[^0-9])720(?:[^0-9]|$)/.test(s);
-}
-function qualityLabel(name = '', url = '') {
-  if (isUHD(name, url)) return 'UHD / 4K';
-  if (isFHD(name, url)) return 'FHD / 1080p';
-  if (isHD(name, url))  return 'HD / 720p';
-  return 'SD';
-}
-function qualityRank(label = '') {
-  const l = label.toUpperCase();
-  if (l.includes('UHD')) return 3;
-  if (l.includes('FHD')) return 2;
-  if (l.includes('HD'))  return 1;
-  return 0;
+  const n = String(name);
+  const u = String(url);
+  return /(\bUHD\b|\b4K\b|2160p?)/i.test(n) || /(HEVC|H\.?265|Main10)/i.test(n) || /(2160|uhd|4k|hevc|main10|h\.?265)/i.test(u);
 }
 function baseNameClean(name = '') {
   return String(name)
@@ -294,6 +273,14 @@ function baseNameClean(name = '') {
     .replace(/\b(UHD|4K|2160p?|FHD|1080p|HD|720p|SD)\b/ig, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
+}
+function qualityScore(name = '', url = '') {
+  if (isUHD(name, url)) return -1; // drop UHD/4K (keeps the more reliable FHD/HD)
+  const s = (name+url).toLowerCase();
+  if (/fhd|1080/.test(s)) return 30;
+  if (/\bhd\b|720/.test(s)) return 20;
+  if (/sd|576|480/.test(s)) return 10;
+  return 15;
 }
 
 /* Curated group matchers */
@@ -358,56 +345,33 @@ async function fetchCuratedEntries() {
   return entries;
 }
 
-/**
- * Returns a Map(baseId -> { id, name, logo, url (default best), variants: [{label,url,rank}] })
- * Variants include HD/FHD/UHD when present. Default url is the highest-ranked reliable variant (UHD>FHD>HD>SD).
- */
-async function getCuratedGroup(key) {
-  const ck = `group:${key}:v2`; // bump cache key due to multi-variant
+async function getCuratedGroup(key /* 'us_tv'|'us_sports'|'uk_tv'|'uk_sports'|'ca_tv'|'ca_sports'|'epl'|'eu_sports'|'world_sports'|'au_sports'|'nz_sports' */) {
+  const ck = `group:${key}`;
   const c = cache.a1x.get(ck);
   if (c && fresh(c)) return c.channels;
 
   const matcher = A1X_GROUPS[key];
   let channels = new Map();
-
   try {
     const entries = await fetchCuratedEntries();
-
-    // Group by base channel name (quality stripped)
-    const grouped = new Map();
+    const bestByBase = new Map();
     for (const e of entries) {
       const grp = String(e.group || '').trim();
       if (!matcher || !matcher.test(grp)) continue;
 
       const base = baseNameClean(e.name);
-      const label = qualityLabel(e.name, e.url);
-      const rank = qualityRank(label);
+      const score = qualityScore(e.name, e.url);
+      if (score < 0) continue;
 
-      if (!grouped.has(base)) grouped.set(base, { id: e.id || base, name: base, logo: e.logo || null, variants: [] });
-      const g = grouped.get(base);
-
-      // Prefer a1xs.vip URLs when duplicates exist for same label
-      const existingIdx = g.variants.findIndex(v => v.label === label);
-      const preferThis = /a1xs\.vip/i.test(e.url);
-      if (existingIdx >= 0) {
-        const existing = g.variants[existingIdx];
-        if (preferThis && !/a1xs\.vip/i.test(existing.url)) {
-          g.variants[existingIdx] = { label, url: e.url, rank };
-        }
-      } else {
-        g.variants.push({ label, url: e.url, rank });
+      const prev = bestByBase.get(base);
+      if (!prev || score > prev._score) {
+        const displayName = e.name.replace(/\b(UHD|4K|2160p?|FHD|1080p|HD|720p|SD)\b/ig, '').replace(/\s{2,}/g,' ').trim();
+        bestByBase.set(base, { ...e, name: displayName, _score: score });
       }
-      // Keep first good-looking logo
-      if (!g.logo && e.logo) g.logo = e.logo;
     }
-
-    // Build final channels map; choose best default url (highest rank)
-    channels = new Map();
-    for (const [base, obj] of grouped) {
-      obj.variants.sort((a,b) => b.rank - a.rank);
-      obj.url = obj.variants[0]?.url || null; // default (used for meta poster etc.)
-      const id = obj.id || base;
-      channels.set(id, { id, name: obj.name, logo: obj.logo, url: obj.url, variants: obj.variants });
+    for (const [, e] of bestByBase) {
+      const id = e.id || baseNameClean(e.name);
+      channels.set(id, { id, name: e.name, logo: e.logo, url: e.url });
     }
   } catch (_) {}
 
@@ -416,27 +380,21 @@ async function getCuratedGroup(key) {
     try {
       const text = await (await fetch(UK_SPORTS_FALLBACK, { cache: 'no-store' })).text();
       const entries = parseM3UEntries(text);
-      const grouped = new Map();
+      const bestByBase = new Map();
       for (const e of entries) {
         const base = baseNameClean(e.name);
-        const label = qualityLabel(e.name, e.url);
-        const rank = qualityRank(label);
-        if (!grouped.has(base)) grouped.set(base, { id: e.id || base, name: base, logo: e.logo || null, variants: [] });
-        const g = grouped.get(base);
-        const existingIdx = g.variants.findIndex(v => v.label === label);
-        if (existingIdx >= 0) {
-          // keep first; fallback file rarely has dup tiers anyway
-        } else {
-          g.variants.push({ label, url: e.url, rank });
+        const score = qualityScore(e.name, e.url);
+        if (score < 0) continue;
+        const prev = bestByBase.get(base);
+        if (!prev || score > prev._score) {
+          const displayName = e.name.replace(/\b(UHD|4K|2160p?|FHD|1080p|HD|720p|SD)\b/ig, '').replace(/\s{2,}/g,' ').trim();
+          bestByBase.set(base, { ...e, name: displayName, _score: score });
         }
-        if (!g.logo && e.logo) g.logo = e.logo;
       }
       channels = new Map();
-      for (const [, obj] of grouped) {
-        obj.variants.sort((a,b) => b.rank - a.rank);
-        obj.url = obj.variants[0]?.url || null;
-        const id = obj.id || obj.name;
-        channels.set(id, { id, name: obj.name, logo: obj.logo, url: obj.url, variants: obj.variants });
+      for (const [, e] of bestByBase) {
+        const id = e.id || baseNameClean(e.name);
+        channels.set(id, { id, name: e.name, logo: e.logo, url: e.url });
       }
     } catch (_) {}
   }
@@ -625,7 +583,7 @@ function buildManifestV3(selectedRegion, options) {
 
   return {
     id: 'com.joshargh.auiptv',
-    version: '2.6.0',
+    version: '2.5.1',
     name: `AU IPTV (${displayName})`,
     description: 'Australian + NZ live streams with optional international TV and Sports (curated).',
     types: ['tv'], catalogs, resources: ['catalog','meta','stream']
@@ -841,21 +799,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
 
   const ch = channels.get(cid);
   if (!ch) return { streams: [] };
-
-  // For curated (international) groups, expose multiple qualities
-  if (region === 'SP' && Array.isArray(ch.variants) && ch.variants.length > 0) {
-    // Deduplicate by URL; map to labeled streams
-    const seen = new Set();
-    const streams = [];
-    for (const v of ch.variants) {
-      if (!v?.url || seen.has(v.url)) continue;
-      seen.add(v.url);
-      streams.push({ url: v.url, title: v.label });
-    }
-    if (streams.length > 0) return { streams };
-  }
-
-  // Fallback: single stream
+  // Note: Stremio UI doesn't show source URLs; we also remove provider naming from all UI strings above.
   return { streams: [{ url: ch.url, title: 'Play' }] };
 });
 
@@ -863,7 +807,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
 const CONFIG_HTML = `<!DOCTYPE html><html lang="en"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <link rel="icon" href="/AUIPTVLOGO.svg" type="image/svg+xml" sizes="any">
-<title>AU IPTV v2.6.0</title><meta http-equiv="Cache-Control" content="no-store"/>
+<title>AU IPTV v2.5.1</title><meta http-equiv="Cache-Control" content="no-store"/>
 <style>
 :root{color-scheme:dark;--bg:#0b0c0f;--card:#14161a;--muted:#9aa4b2;--text:#ecf2ff;--ok:#34c759;--okText:#04210d;--line:#22252b;--accent:#4fc3f7}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial}
@@ -892,7 +836,7 @@ details.acc[open]>summary{border-bottom:1px solid var(--line)}
 </h1>
 
 <h1>
-  AU IPTV <span class="badge">v2.6.0</span>
+  AU IPTV <span class="badge">v2.5.1</span>
   <span class="spacer"></span>
   <span id="installs" class="h1-installs" aria-live="polite" title="Total installs" style="font-size:12px;color:#9aa4b2">
     Installs: —
@@ -1160,7 +1104,7 @@ function manifestResponderV2(req, res) {
     });
 
     man.logo = man.icon = `${baseUrl(req)}/AUIPTVLOGO.svg`;
-    man.stremioAddonsConfig = STREMIO_ADDONS_CONFIG;
+    man.stremioAddonsConfig = STREMIO_ADDONS_CONFIG; // ← add here
     res.json(man);
   } catch (e) {
     console.error('manifest v3 error', e);
@@ -1203,7 +1147,7 @@ function manifestResponderLegacy(req, res) {
     const includeRadio = /\/radio(\/|$)/.test(req.path);
     const man = buildManifestV1(region, includeRadio);
     man.logo = man.icon = `${baseUrl(req)}/AUIPTVLOGO.svg`;
-    man.stremioAddonsConfig = STREMIO_ADDONS_CONFIG;
+    man.stremioAddonsConfig = STREMIO_ADDONS_CONFIG; // ← add here
     res.json(man);
   } catch (e) {
     console.error('manifest legacy error', e);
@@ -1218,7 +1162,7 @@ app.get('/:region/radio/manifest.json', manifestResponderLegacy);
 app.get('/manifest.json', (req, res) => {
   const man = buildManifestV3(DEFAULT_REGION, { auTV: true, radio: true });
   man.logo = man.icon = `${baseUrl(req)}/AUIPTVLOGO.svg`;
-  man.stremioAddonsConfig = STREMIO_ADDONS_CONFIG;
+  man.stremioAddonsConfig = STREMIO_ADDONS_CONFIG; // ← and here
   res.json(man);
 });
 
@@ -1237,10 +1181,10 @@ app.use((req, res, next) => {
 app.use('/', sdkRouter);
 
 // Export for AWS Lambda + Local dev
-//module.exports.handler = serverless(app);
+module.exports.handler = serverless(app);
 
 // For local dev, you can uncomment the following lines to run the server
-if (require.main === module) {
-  const PORT = process.env.PORT || 7000;
-  app.listen(PORT, () => console.log('Listening on', PORT));
-}
+//if (require.main === module) {
+//  const PORT = process.env.PORT || 7000;
+//  app.listen(PORT, () => console.log('Listening on', PORT));
+//}
