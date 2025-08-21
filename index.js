@@ -287,6 +287,8 @@ const A1X_CURATED_PRIMARY = 'https://bit.ly/a1xstream';
 const A1X_CURATED_BACKUP  = 'https://a1xs.vip/a1xstream';
 const A1X_CURATED_DIRECT  = 'https://raw.githubusercontent.com/a1xmedia/m3u/refs/heads/main/a1x.m3u';
 
+
+const A1X_EPG_URL = 'https://bit.ly/a1xepg';
 /* -------------- UK Sports tertiary fallback (legacy) ---------- */
 const UK_SPORTS_FALLBACK = 'https://forgejo.plainrock127.xyz/Mystique-Play/Mystique/raw/branch/main/countries/uk_sports.m3u';
 
@@ -534,6 +536,21 @@ async function getNZEPG() {
   return map;
 }
 
+async function getA1XEPG() {
+  const key = 'a1x:epg';
+  const c = cache.epg.get(key);
+  if (c && fresh(c)) return c.map;
+  try {
+    const xml = await (await fetch(A1X_EPG_URL)).text();
+    const map = await parseEPG(xml);
+    cache.epg.set(key, { ts: Date.now(), map });
+    return map;
+  } catch (_) {
+    cache.epg.set(key, { ts: Date.now(), map: new Map() });
+    return new Map();
+  }
+}
+
 /* ----------------------- ORDERING (NZ) -------------------- */
 const NZ_TV_ORDER = [
   'Warner Bros TV Motorheads','Warner Bros TV Deadliest Catch','Warner Bros TV House Hunters','JuiceTV','The Box','Big Rig','Melo','The Groat',
@@ -594,18 +611,15 @@ function buildManifestV3(selectedRegion, options) {
     const otherCities = REGIONS.filter(r => r !== selectedRegion);
     otherCities.forEach(city => genreOptions.push(`${city} TV`));
   }
-
+  if (ausports) genreOptions.push('AU Sports');
   if (nzTV) genreOptions.push('NZ TV');
   if (nzRadio) genreOptions.push('NZ Radio');
-
   if (uktv) genreOptions.push('UK TV');
   if (uksports) genreOptions.push('UK Sports');
   if (ustv) genreOptions.push('US TV');
   if (ussports) genreOptions.push('US Sports');
   if (catv) genreOptions.push('CA TV');
   if (casports) genreOptions.push('CA Sports');
-
-  if (ausports) genreOptions.push('AU Sports');
   if (nzsports) genreOptions.push('NZ Sports');
   if (eusports) genreOptions.push('EU Sports');
   if (worldsports) genreOptions.push('World Sports');
@@ -699,7 +713,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
   else if (isCurated) channels = await getCuratedGroup(curatedKey);
   else channels = await getChannels(contentRegion, contentKind);
 
-  const epg = (contentKind === 'tv') ? (isNZ ? await getNZEPG() : new Map()) : new Map();
+  const epg = (contentKind === 'tv') ? (isNZ ? await getNZEPG() : (isCurated ? await getA1XEPG() : await getEPG(contentRegion))) : new Map();
 
   const metas = [];
   for (const [cid, ch] of channels) {
@@ -810,7 +824,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
   const regionKey = region === 'SP' ? `SP:${parsed.curatedKey}` : region;
 
   if (kind === 'tv') {
-    const progs = (region === 'NZ') ? (await getNZEPG()).get(cid) || [] : [];
+    const progs = (region === 'NZ') ? ((await getNZEPG()).get(cid) || []) : (region === 'SP' ? ((await getA1XEPG()).get(cid) || []) : ((await getEPG(region)).get(cid) || []));
     const desc = progs.slice(0,8).map(p => `${fmtLocal(p.start, tz)} | ${p.title || ''}`).join(' • ');
     const nowp = nowProgramme(progs);
     const squarePoster = posterAny(regionKey, ch);   // from /images (map.json)
@@ -1191,9 +1205,9 @@ app.use((req, res, next) => {
 });
 app.use('/', sdkRouter);
 
-//module.exports.handler = serverless(app);
+module.exports.handler = serverless(app);
 
-if (require.main === module) {
-  const PORT = process.env.PORT || 7000;
-  app.listen(PORT, () => console.log('Listening on', PORT));
-}
+//if (require.main === module) {
+//  const PORT = process.env.PORT || 7000;
+//  app.listen(PORT, () => console.log('Listening on', PORT));
+//}
