@@ -713,8 +713,10 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
   else if (isCurated) channels = await getCuratedGroup(curatedKey);
   else channels = await getChannels(contentRegion, contentKind);
 
-  const epg = (contentKind === 'tv') ? (isNZ ? await getNZEPG() : (isCurated ? await getA1XEPG() : await getEPG(contentRegion))) : new Map();
-
+const epg = (contentKind === 'tv')
+  ? (isNZ ? await getNZEPG() : (isCurated ? new Map() : await getEPG(contentRegion)))
+  : new Map();
+  
   const metas = [];
   for (const [cid, ch] of channels) {
     if (contentKind === 'tv') {
@@ -824,27 +826,36 @@ builder.defineMetaHandler(async ({ type, id }) => {
   const regionKey = region === 'SP' ? `SP:${parsed.curatedKey}` : region;
 
   if (kind === 'tv') {
-    const progs = (region === 'NZ') ? ((await getNZEPG()).get(cid) || []) : (region === 'SP' ? ((await getA1XEPG()).get(cid) || []) : ((await getEPG(region)).get(cid) || []));
-    const desc = progs.slice(0,8).map(p => `${fmtLocal(p.start, tz)} | ${p.title || ''}`).join(' • ');
+    // AU/NZ EPG kept; curated EPG disabled
+    const progs = (region === 'NZ')
+      ? ((await getNZEPG()).get(cid) || [])
+      : (region === 'SP'
+          ? [] // no curated EPG
+          : ((await getEPG(region)).get(cid) || []));
+    const desc = progs.slice(0, 8).map(p => `${fmtLocal(p.start, tz)} | ${p.title || ''}`).join(' • ');
     const nowp = nowProgramme(progs);
-    const squarePoster = posterAny(regionKey, ch);   // from /images (map.json)
-    const m3uPoster    = m3uLogoAny(regionKey, ch);  // tvg-logo (for title area)
+
+    const squarePoster = posterAny(regionKey, ch);                     // from map.json
+    const m3uPoster    = (region === 'SP') ? null : m3uLogoAny(regionKey, ch); // no tvg-logo for curated
 
     return {
       meta: {
         id, type: 'tv', name: ch.name,
-        poster: squarePoster,                      // keep square art as poster
-        background: squarePoster,                  // blurred bg
-        logo: m3uPoster || squarePoster,           // << shows next to the Title
+        poster: squarePoster,
+        background: squarePoster,
+        logo: m3uPoster || squarePoster,
         posterShape: 'square',
-        description: desc || (region === 'NZ' ? 'Live NZ television' : (region === 'SP' ? 'Curated' : 'Live television streaming')),
-        releaseInfo: nowp ? `${fmtLocal(nowp.start, tz)} - ${fmtLocal(nowp.stop, tz)} | ${nowp.title}`
-                          : (region === 'NZ' ? 'Live NZ TV' : 'Live TV'),
+        description: desc || (region === 'NZ' ? 'Live NZ television'
+                          : (region === 'SP' ? 'Curated' : 'Live television streaming')),
+        releaseInfo: nowp
+          ? `${fmtLocal(nowp.start, tz)} - ${fmtLocal(nowp.stop, tz)} | ${nowp.title}`
+          : (region === 'NZ' ? 'Live NZ TV' : (region === 'SP' ? 'Curated TV' : 'Live TV')),
       }
     };
   } else {
     const squarePoster = posterAny(regionKey, ch);
-    const m3uPoster    = m3uLogoAny(regionKey, ch);
+    const m3uPoster    = (region === 'SP') ? null : m3uLogoAny(regionKey, ch);
+
     return {
       meta: {
         id, type: 'tv', name: ch.name,
@@ -858,6 +869,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
     };
   }
 });
+
 
 builder.defineStreamHandler(async ({ type, id }) => {
   if (type !== 'tv') return { streams: [] };
