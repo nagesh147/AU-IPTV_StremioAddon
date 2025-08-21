@@ -1,4 +1,4 @@
-// index.js — AU IPTV (AU+NZ with selectable US/UK/CA TV & Sports) — v2.6.0 Curated + Multi-Quality Streams
+// index.js — AU IPTV (AU+NZ with selectable US/UK/CA TV & Sports) — v2.6.3 Curated + Multi-Quality Streams
 const express = require('express');
 const serverless = require('serverless-http');
 const { addonBuilder, getRouter } = require('stremio-addon-sdk');
@@ -28,6 +28,34 @@ const STREMIO_ADDONS_CONFIG = {
     || 'eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2In0..jPqqSM-s0k525D13Y_oqXA.Hz3vTlruk-WxtkneysiM4Eq9sAuCSNcW_77QHAdRFocIAbom2Ju8lhwpSI0W8aEtMeqefAV4i46N7Z5452wqPfJZZHzJ9OVcDtDTqaGxi33Znt68CD8oZqQOalnRrC2x.qR2mVkk9v112anUUgUoFCQ'
 };
 
+// --- Posters: use map.json → GitHub /images for ALL TV & Radio (grid), tvg-logo for detail/title ---
+const IMAGES_BASE = process.env.IMAGES_BASE || 'https://raw.githubusercontent.com/josharghhh/AU-IPTV_StremioAddon/main';
+let POSTER_MAP = {};
+try { POSTER_MAP = require('./map.json'); } catch (_) { POSTER_MAP = {}; }
+
+// square poster from /images (GitHub) if mapped; otherwise fall back
+function posterFromMapAbs(chId) {
+  const rel = POSTER_MAP?.[chId];
+  if (!rel) return null;
+  if (/^https?:\/\//i.test(rel)) return rel;
+  const p = rel.startsWith('/images/') ? rel : `/images/${String(rel).replace(/^\/+/, '')}`;
+  return `${IMAGES_BASE}${p}`;
+}
+function posterAny(regionOrKey, ch) {
+  const mapped = posterFromMapAbs(ch.id);
+  if (mapped) return mapped;                 // prefer your square art
+  if (ch.logo && /^https?:\/\//i.test(ch.logo)) return ch.logo;
+  if (regionOrKey === 'NZ') return `${baseNZ()}/logo/${encodeURIComponent(ch.id)}.png`;
+  if (String(regionOrKey || '').startsWith('SP')) return ''; // curated may not have a fallback
+  return `${base(regionOrKey)}/logo/${encodeURIComponent(ch.id)}.png`;
+}
+// tvg-logo (as provided in M3U) for the meta detail header (title area)
+function m3uLogoAny(regionOrKey, ch) {
+  if (ch.logo && /^https?:\/\//i.test(ch.logo)) return ch.logo; // tvg-logo
+  if (regionOrKey === 'NZ') return `${baseNZ()}/logo/${encodeURIComponent(ch.id)}.png`;
+  if (String(regionOrKey || '').startsWith('SP')) return '';
+  return `${base(regionOrKey)}/logo/${encodeURIComponent(ch.id)}.png`;
+}
 
 // Seedable, in-memory installs counter
 const STATS_SEED = Number(process.env.STATS_SEED || 498);
@@ -60,7 +88,8 @@ function parseM3U(text) {
     if (line.startsWith('#EXTINF')) {
       const name = line.split(',').pop().trim();
       const idm   = line.match(/tvg-id="([^"]+)"/i);
-      const logom = line.match(/tvg-logo="([^"]+)"/i);
+      theLogo     = line.match(/tvg-logo="([^"]+)"/i);
+      const logom = theLogo;
       const grp   = line.match(/group-title="([^"]+)"/i);
       cur = { id: idm ? idm[1] : name, name, logo: logom ? logom[1] : null, group: grp ? grp[1] : null };
     } else if (line.startsWith('#EXTGRP:')) {
@@ -363,7 +392,7 @@ async function fetchCuratedEntries() {
  * Variants include HD/FHD/UHD when present. Default url is the highest-ranked reliable variant (UHD>FHD>HD>SD).
  */
 async function getCuratedGroup(key) {
-  const ck = `group:${key}:v2`; // bump cache key due to multi-variant
+  const ck = `group:${key}:v2`;
   const c = cache.a1x.get(ck);
   if (c && fresh(c)) return c.channels;
 
@@ -373,7 +402,6 @@ async function getCuratedGroup(key) {
   try {
     const entries = await fetchCuratedEntries();
 
-    // Group by base channel name (quality stripped)
     const grouped = new Map();
     for (const e of entries) {
       const grp = String(e.group || '').trim();
@@ -386,7 +414,6 @@ async function getCuratedGroup(key) {
       if (!grouped.has(base)) grouped.set(base, { id: e.id || base, name: base, logo: e.logo || null, variants: [] });
       const g = grouped.get(base);
 
-      // Prefer a1xs.vip URLs when duplicates exist for same label
       const existingIdx = g.variants.findIndex(v => v.label === label);
       const preferThis = /a1xs\.vip/i.test(e.url);
       if (existingIdx >= 0) {
@@ -397,21 +424,18 @@ async function getCuratedGroup(key) {
       } else {
         g.variants.push({ label, url: e.url, rank });
       }
-      // Keep first good-looking logo
       if (!g.logo && e.logo) g.logo = e.logo;
     }
 
-    // Build final channels map; choose best default url (highest rank)
     channels = new Map();
     for (const [base, obj] of grouped) {
       obj.variants.sort((a,b) => b.rank - a.rank);
-      obj.url = obj.variants[0]?.url || null; // default (used for meta poster etc.)
+      obj.url = obj.variants[0]?.url || null;
       const id = obj.id || base;
       channels.set(id, { id, name: obj.name, logo: obj.logo, url: obj.url, variants: obj.variants });
     }
   } catch (_) {}
 
-  // Tertiary fallback only for UK sports if curated returns nothing
   if ((!channels || channels.size === 0) && key === 'uk_sports') {
     try {
       const text = await (await fetch(UK_SPORTS_FALLBACK, { cache: 'no-store' })).text();
@@ -424,11 +448,7 @@ async function getCuratedGroup(key) {
         if (!grouped.has(base)) grouped.set(base, { id: e.id || base, name: base, logo: e.logo || null, variants: [] });
         const g = grouped.get(base);
         const existingIdx = g.variants.findIndex(v => v.label === label);
-        if (existingIdx >= 0) {
-          // keep first; fallback file rarely has dup tiers anyway
-        } else {
-          g.variants.push({ label, url: e.url, rank });
-        }
+        if (existingIdx < 0) g.variants.push({ label, url: e.url, rank });
         if (!g.logo && e.logo) g.logo = e.logo;
       }
       channels = new Map();
@@ -536,21 +556,6 @@ function nzOrderValue(name) {
   return 10000;
 }
 
-function logo(region, ch) {
-  if (ch.logo && /^https?:\/\//i.test(ch.logo)) return ch.logo;
-  return logoUrl(region, ch.id);
-}
-function logoAny(regionOrKey, ch) {
-  if (regionOrKey === 'NZ') {
-    if (ch.logo && /^https?:\/\//i.test(ch.logo)) return ch.logo;
-    return logoNZUrl(ch.id);
-  }
-  if (regionOrKey && String(regionOrKey).startsWith('SP')) { // Curated (TV or Sports)
-    return (ch.logo && /^https?:\/\//i.test(ch.logo)) ? ch.logo : '';
-  }
-  return logo(regionOrKey, ch);
-}
-
 /* ---------------------- MANIFEST (v3) --------------------- */
 function genreCity(selected) {
   const s = String(selected||'').toLowerCase().replace(/[^a-z0-9+ ]+/gi,' ').trim();
@@ -585,7 +590,6 @@ function buildManifestV3(selectedRegion, options) {
   if (auTV) genreOptions.push('Traditional Channels','Other Channels','All TV Channels','Regional Channels');
   if (radio) genreOptions.push('Radio');
 
-  // AU other cities
   if (auTV) {
     const otherCities = REGIONS.filter(r => r !== selectedRegion);
     otherCities.forEach(city => genreOptions.push(`${city} TV`));
@@ -607,7 +611,6 @@ function buildManifestV3(selectedRegion, options) {
   if (worldsports) genreOptions.push('World Sports');
   if (epl) genreOptions.push('EPL');
 
-  // If NZ is default, force a selection (hide "None") and put NZ TV first
   let isRequired = !!nzDefault;
   if (nzDefault && nzTV) {
     const pruned = genreOptions.filter(g => g !== 'NZ TV');
@@ -625,7 +628,7 @@ function buildManifestV3(selectedRegion, options) {
 
   return {
     id: 'com.joshargh.auiptv',
-    version: '2.6.0',
+    version: '2.6.3',
     name: `AU IPTV (${displayName})`,
     description: 'Australian + NZ live streams with optional international TV and Sports (curated).',
     types: ['tv'], catalogs, resources: ['catalog','meta','stream']
@@ -657,7 +660,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
   let isNZ          = false;
 
   let isCurated     = false;
-  let curatedKey    = null; // 'us_tv'|'us_sports'|'uk_tv'|'uk_sports'|'ca_tv'|'ca_sports'|'epl'|'eu_sports'|'world_sports'|'au_sports'|'nz_sports'
+  let curatedKey    = null;
 
   if (genreIs(selectedGenre, 'traditional channels','traditional')) {
     catalogType = 'traditional';
@@ -733,7 +736,8 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
             : `au|${isNZ?'NZ':contentRegion}|${cid}|${contentKind}`,
         type: 'tv',
         name: ch.name,
-        poster: logoAny(isCurated?`SP:${curatedKey}`:(isNZ?'NZ':contentRegion), ch),
+        poster: posterAny(isCurated?`SP:${curatedKey}`:(isNZ?'NZ':contentRegion), ch), // square for grid
+        posterShape: 'square',
         description: isNZ ? 'New Zealand TV'
                           : (isCurated ? (/sports|epl/i.test(curatedKey||'') ? 'Global Sports' : 'Global TV')
                                        : (catalogType === 'regional' ? 'Regional AU TV' : 'Live AU TV')),
@@ -747,7 +751,8 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
         id: `au|${isNZ?'NZ':contentRegion}|${cid}|radio`,
         type: 'tv',
         name: ch.name,
-        poster: logoAny(isNZ?'NZ':contentRegion, ch),
+        poster: posterAny(isNZ?'NZ':contentRegion, ch), // square for grid
+        posterShape: 'square',
         description: isNZ ? 'New Zealand Radio' : 'Live AU Radio',
         releaseInfo: isNZ ? 'Live NZ Radio' : 'Live Radio'
       });
@@ -770,7 +775,6 @@ function parseItemId(id) {
   const p = String(id||'').split('|');
   if (p.length < 3 || p[0] !== 'au') return null;
   const [, regionRaw, cid, kindRaw = 'tv'] = p;
-  // Curated id: SP:<key>
   if (String(regionRaw).startsWith('SP:')) {
     const curatedKey = regionRaw.split(':')[1] || '';
     return { region: 'SP', curatedKey, cid, kind: (kindRaw === 'radio' ? 'radio' : 'tv') };
@@ -803,24 +807,37 @@ builder.defineMetaHandler(async ({ type, id }) => {
   }
   if (!ch) return { meta: {} };
 
+  const regionKey = region === 'SP' ? `SP:${parsed.curatedKey}` : region;
+
   if (kind === 'tv') {
     const progs = (region === 'NZ') ? (await getNZEPG()).get(cid) || [] : [];
     const desc = progs.slice(0,8).map(p => `${fmtLocal(p.start, tz)} | ${p.title || ''}`).join(' • ');
     const nowp = nowProgramme(progs);
+    const squarePoster = posterAny(regionKey, ch);   // from /images (map.json)
+    const m3uPoster    = m3uLogoAny(regionKey, ch);  // tvg-logo (for title area)
+
     return {
       meta: {
         id, type: 'tv', name: ch.name,
-        poster: logoAny(region === 'SP' ? `SP:${parsed.curatedKey}` : region, ch),
+        poster: squarePoster,                      // keep square art as poster
+        background: squarePoster,                  // blurred bg
+        logo: m3uPoster || squarePoster,           // << shows next to the Title
+        posterShape: 'square',
         description: desc || (region === 'NZ' ? 'Live NZ television' : (region === 'SP' ? 'Curated' : 'Live television streaming')),
         releaseInfo: nowp ? `${fmtLocal(nowp.start, tz)} - ${fmtLocal(nowp.stop, tz)} | ${nowp.title}`
                           : (region === 'NZ' ? 'Live NZ TV' : 'Live TV'),
       }
     };
   } else {
+    const squarePoster = posterAny(regionKey, ch);
+    const m3uPoster    = m3uLogoAny(regionKey, ch);
     return {
       meta: {
         id, type: 'tv', name: ch.name,
-        poster: logoAny(region, ch),
+        poster: squarePoster,
+        background: squarePoster,
+        logo: m3uPoster || squarePoster,
+        posterShape: 'square',
         description: region === 'NZ' ? 'Live NZ radio streaming' : 'Live radio streaming',
         releaseInfo: region === 'NZ' ? 'Live NZ Radio' : 'Live Radio',
       }
@@ -842,9 +859,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
   const ch = channels.get(cid);
   if (!ch) return { streams: [] };
 
-  // For curated (international) groups, expose multiple qualities
   if (region === 'SP' && Array.isArray(ch.variants) && ch.variants.length > 0) {
-    // Deduplicate by URL; map to labeled streams
     const seen = new Set();
     const streams = [];
     for (const v of ch.variants) {
@@ -855,7 +870,6 @@ builder.defineStreamHandler(async ({ type, id }) => {
     if (streams.length > 0) return { streams };
   }
 
-  // Fallback: single stream
   return { streams: [{ url: ch.url, title: 'Play' }] };
 });
 
@@ -863,7 +877,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
 const CONFIG_HTML = `<!DOCTYPE html><html lang="en"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <link rel="icon" href="/AUIPTVLOGO.svg" type="image/svg+xml" sizes="any">
-<title>AU IPTV v2.6.0</title><meta http-equiv="Cache-Control" content="no-store"/>
+<title>AU IPTV v2.6.3</title><meta http-equiv="Cache-Control" content="no-store"/>
 <style>
 :root{color-scheme:dark;--bg:#0b0c0f;--card:#14161a;--muted:#9aa4b2;--text:#ecf2ff;--ok:#34c759;--okText:#04210d;--line:#22252b;--accent:#4fc3f7}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial}
@@ -873,7 +887,7 @@ h1{margin:0 0 6px;font-size:26px;display:flex;align-items:center;gap:8px}
 .lead{margin:0 0 14px;color:var(--muted)}
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:12px 0}
 label{font-size:13px;color:var(--muted)}select{background:#0f1115;color:var(--text);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
-.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;border:1px solid var(--line);background:#101318;color:var(--text);text-decoration:none;cursor:pointer;white-space:nowrap}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;border:1px solid var(--line);background:#101318;color:#fff;text-decoration:none;cursor:pointer;white-space:nowrap}
 .btn:hover{background:#0e1218}.btn-primary{background:var(--ok);border-color:var(--ok);color:var(--okText);font-weight:700}
 .btn-ghost{background:transparent}
 code{display:block;margin-top:10px;padding:10px 12px;background:#0f1115;border:1px solid var(--line);border-radius:10px;color:#a7f3d0;overflow:auto;word-break:break-all;font-size:12px}
@@ -892,7 +906,7 @@ details.acc[open]>summary{border-bottom:1px solid var(--line)}
 </h1>
 
 <h1>
-  AU IPTV <span class="badge">v2.6.0</span>
+  AU IPTV <span class="badge">v2.6.3</span>
   <span class="spacer"></span>
   <span id="installs" class="h1-installs" aria-live="polite" title="Total installs" style="font-size:12px;color:#9aa4b2">
     Installs: —
@@ -964,45 +978,25 @@ details.acc[open]>summary{border-bottom:1px solid var(--line)}
 <div class="hint">Web installer: <span id="weburl">—</span></div>
 
 </div>
-<!-- Ko-fi floating support widget -->
-<div class="cta" style="display:flex;gap:10px;margin-top:10px">
-  <a href="https://www.buymeacoffee.com/joshargh"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=&slug=joshargh&button_colour=34c759&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=FFDD00" /></a>
-<script type='text/javascript' src='https://storage.ko-fi.com/cdn/widget/Widget_2.js'></script><script type='text/javascript'>kofiwidget2.init('Support me on Ko-fi', '#9673f5', 'U7U21JXCOA');kofiwidget2.draw();</script> 
-  <a class="btn btn-primary" href="https://hook.up.me/joshargh" target="_blank" rel="noopener noreferrer">☕ Get $10 free coffee (on me)</a>
-  <a class="btn" href="http://paypal.me/joshargh" target="_blank" rel="noopener noreferrer">💸 Help with server costs (PayPal)</a>
-</div>
-<div class="cta-note" style="font-size:12px;color:#9aa4b2">Instead of “buy me a coffee”, let me buy <i>you</i> one — sign up via Hook for $10 free. If you’d still like to chip in, PayPal helps keep the addon running.</div>
 </div>
 
 <script>
 const $ = s => document.querySelector(s);
 
-// AU city list + helpers
 const AU_CITIES = ['Adelaide','Brisbane','Canberra','Darwin','Hobart','Melbourne','Perth','Sydney'];
-let lastAuCity = 'Brisbane';
-function isAuCity(v){ return AU_CITIES.includes(v); }
-
-// Never emit non-AU here; backend expects AU city as the first path segment
 function region() {
   const raw = ($('#region').value || 'Brisbane').trim();
   return encodeURIComponent(raw);
 }
-
 function pathPrefix() {
   const parts = [region()];
-
-  // AU toggles
   if (!$('#auTv').checked) parts.push('noau');
   if ($('#radio').checked) parts.push('radio');
   if ($('#auSports').checked) parts.push('ausports');
-
-  // NZ toggles
   if ($('#nz').checked) parts.push('nz');
   if ($('#nzRadio').checked) parts.push('nzradio');
   if ($('#nzDefault').checked) parts.push('nzdefault');
   if ($('#nzSports').checked) parts.push('nzsports');
-
-  // International toggles
   if ($('#ukTV').checked) parts.push('uktv');
   if ($('#ukSports').checked) parts.push('uksports');
   if ($('#usTV').checked) parts.push('ustv');
@@ -1012,28 +1006,20 @@ function pathPrefix() {
   if ($('#euSports').checked) parts.push('eusports');
   if ($('#worldSports').checked) parts.push('worldsports');
   if ($('#epl').checked) parts.push('epl');
-
   return '/' + parts.join('/');
 }
-
 function manifestUrl() { return location.origin + pathPrefix() + '/manifest.json'; }
 function webInstall(u) { return 'https://web.stremio.com/#/addons?addon=' + encodeURIComponent(u); }
-
 function update() {
   $('#nzDefaultWrap').style.display = $('#nz').checked ? 'inline-block' : 'none';
   if (!$('#nz').checked) $('#nzDefault').checked = false;
-
   const m = manifestUrl();
   const w = webInstall(m);
   $('#preview').textContent = m;
   $('#weburl').textContent = w;
   $('#manifestLink').href = m;
 }
-
-['change','input'].forEach(ev=>{
-  document.addEventListener(ev, (e)=>{ if (e.target && e.target.id) update(); });
-});
-
+['change','input'].forEach(ev=>{ document.addEventListener(ev, (e)=>{ if (e.target && e.target.id) update(); }); });
 async function copyToClipboard(text) {
   try { await navigator.clipboard.writeText(text); }
   catch {
@@ -1044,22 +1030,18 @@ async function copyToClipboard(text) {
     document.body.removeChild(ta);
   }
 }
-
 $('#open').addEventListener('click', async () => {
   update();
   const m = manifestUrl();
   await copyToClipboard(m);
   window.open(webInstall(m), '_blank', 'noopener,noreferrer');
 });
-
 $('#manifestLink').addEventListener('click', async (e) => {
-  e.preventDefault();
-  update();
+  e.preventDefault(); update();
   const m = manifestUrl();
   await copyToClipboard(m);
   window.open(m, '_blank', 'noopener,noreferrer');
 });
-
 $('#copy').addEventListener('click', async () => {
   update();
   const m = manifestUrl();
@@ -1068,29 +1050,7 @@ $('#copy').addEventListener('click', async () => {
   const t = btn.textContent; btn.textContent = 'Copied!';
   setTimeout(()=>btn.textContent=t, 1200);
 });
-
-// installs pulse
-let installsTimer = null;
-function startStats(){
-  if (installsTimer) return;
-  installsTimer = setInterval(refreshStats, 60000);
-}
-async function refreshStats(){
-  try{
-    const r = await fetch('/stats', { cache: 'no-store' });
-    const j = await r.json();
-    const n = (j.installs ?? 0);
-    const fmt = new Intl.NumberFormat('en-AU', { notation: 'compact', maximumFractionDigits: 1 });
-    const el = document.querySelector('#installs');
-    el.textContent = 'Installs: ' + fmt.format(n);
-    el.setAttribute('aria-label', (n||0).toLocaleString() + ' total installs');
-  } catch(_) {}
-}
-
 update();
-startStats();
-refreshStats();
-document.addEventListener('visibilitychange', ()=>{ if (!document.hidden) refreshStats(); });
 </script>
 
 </body></html>`;
@@ -1128,7 +1088,6 @@ function baseUrl(req) {
 function parseFlagsFromPath(reqPath) {
   const parts = reqPath.split('/').filter(Boolean);
   const flags = new Set(parts.slice(1)); // after region
-  // Back-compat shims
   if (flags.has('sports')) ['uksports','ussports','casports','ausports','nzsports','eusports','worldsports','epl'].forEach(f=>flags.add(f));
   if (flags.has('ukskysports') || flags.has('ukskyother')) flags.add('uksports');
   return { regionRaw: decodeURIComponent(parts[0] || DEFAULT_REGION), flags };
@@ -1168,8 +1127,6 @@ function manifestResponderV2(req, res) {
   }
 }
 
-
-// Accepts /:region/[flags...]/manifest.json
 app.get(/^\/[^/]+(?:\/[^/]+)*\/manifest\.json$/, manifestResponderV2);
 
 // Legacy v1 endpoints (kept for compatibility with old installs)
@@ -1211,7 +1168,6 @@ function manifestResponderLegacy(req, res) {
   }
 }
 
-
 app.get('/:region/manifest.json', manifestResponderLegacy);
 app.get('/:region/radio/manifest.json', manifestResponderLegacy);
 
@@ -1221,7 +1177,6 @@ app.get('/manifest.json', (req, res) => {
   man.stremioAddonsConfig = STREMIO_ADDONS_CONFIG;
   res.json(man);
 });
-
 
 const sdkRouter = getRouter(builder.getInterface());
 app.use((req, res, next) => {
@@ -1236,10 +1191,8 @@ app.use((req, res, next) => {
 });
 app.use('/', sdkRouter);
 
-// Export for AWS Lambda + Local dev
 //module.exports.handler = serverless(app);
 
-// For local dev, you can uncomment the following lines to run the server
 if (require.main === module) {
   const PORT = process.env.PORT || 7000;
   app.listen(PORT, () => console.log('Listening on', PORT));
