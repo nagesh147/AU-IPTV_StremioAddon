@@ -1,4 +1,6 @@
-// index.js — AU IPTV (AU+NZ with selectable US/UK/CA TV & Sports) — v2.6.3 Curated + Multi-Quality Streams
+// index.js — AU IPTV (AU+NZ with selectable US/UK/CA TV & Sports) — v2.6.3
+// Static UI + curated HLS fix for TV/Android (master & per-quality dynamic playlists)
+
 const express = require('express');
 const serverless = require('serverless-http');
 const { addonBuilder, getRouter } = require('stremio-addon-sdk');
@@ -28,12 +30,11 @@ const STREMIO_ADDONS_CONFIG = {
     || 'eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2In0..jPqqSM-s0k525D13Y_oqXA.Hz3vTlruk-WxtkneysiM4Eq9sAuCSNcW_77QHAdRFocIAbom2Ju8lhwpSI0W8aEtMeqefAV4i46N7Z5452wqPfJZZHzJ9OVcDtDTqaGxi33Znt68CD8oZqQOalnRrC2x.qR2mVkk9v112anUUgUoFCQ'
 };
 
-// --- Posters: use map.json → GitHub /images for ALL TV & Radio (grid), tvg-logo for detail/title ---
+// Posters: use map.json → GitHub /images for ALL TV & Radio (grid), tvg-logo for detail/title
 const IMAGES_BASE = process.env.IMAGES_BASE || 'https://raw.githubusercontent.com/josharghhh/AU-IPTV_StremioAddon/main';
 let POSTER_MAP = {};
 try { POSTER_MAP = require('./map.json'); } catch (_) { POSTER_MAP = {}; }
 
-// square poster from /images (GitHub) if mapped; otherwise fall back
 function posterFromMapAbs(chId) {
   const rel = POSTER_MAP?.[chId];
   if (!rel) return null;
@@ -43,15 +44,14 @@ function posterFromMapAbs(chId) {
 }
 function posterAny(regionOrKey, ch) {
   const mapped = posterFromMapAbs(ch.id);
-  if (mapped) return mapped;                 // prefer your square art
+  if (mapped) return mapped;
   if (ch.logo && /^https?:\/\//i.test(ch.logo)) return ch.logo;
   if (regionOrKey === 'NZ') return `${baseNZ()}/logo/${encodeURIComponent(ch.id)}.png`;
-  if (String(regionOrKey || '').startsWith('SP')) return ''; // curated may not have a fallback
+  if (String(regionOrKey || '').startsWith('SP')) return '';
   return `${base(regionOrKey)}/logo/${encodeURIComponent(ch.id)}.png`;
 }
-// tvg-logo (as provided in M3U) for the meta detail header (title area)
 function m3uLogoAny(regionOrKey, ch) {
-  if (ch.logo && /^https?:\/\//i.test(ch.logo)) return ch.logo; // tvg-logo
+  if (ch.logo && /^https?:\/\//i.test(ch.logo)) return ch.logo;
   if (regionOrKey === 'NZ') return `${baseNZ()}/logo/${encodeURIComponent(ch.id)}.png`;
   if (String(regionOrKey || '').startsWith('SP')) return '';
   return `${base(regionOrKey)}/logo/${encodeURIComponent(ch.id)}.png`;
@@ -67,12 +67,16 @@ const cache = {
   m3u: new Map(), epg: new Map(), json: new Map(),
   radio: new Map(), radioM3u: new Map(),
   a1x: new Map(),
-  nz_tv: new Map(), nz_radio: new Map(), nz_tv_m3u: new Map(), nz_radio_m3u: new Map(), nz_epg: new Map()
+  nz_tv: new Map(), nz_radio: new Map(), nz_tv_m3u: new Map(), nz_radio_m3u: new Map(), nz_epg: new Map(),
+  hls: new Map() // curated per-quality playlist short cache
 };
 const fresh = (entry) => entry && (Date.now() - entry.ts) < CACHE_TTL;
 const validRegion = (r) => (REGIONS.includes(r) ? r : DEFAULT_REGION);
 
-// Simple in-memory install bump (no S3, no dedupe)
+// very short cache to reduce Lambda hits for curated playlist mirroring
+const HLS_PROXY_TTL = Number(process.env.HLS_PROXY_TTL || 3500); // ~3.5s
+
+// Simple in-memory install bump
 function markInstall(_req) {
   _memStats.installs = (_memStats.installs || 0) + 1;
 }
@@ -88,8 +92,7 @@ function parseM3U(text) {
     if (line.startsWith('#EXTINF')) {
       const name = line.split(',').pop().trim();
       const idm   = line.match(/tvg-id="([^"]+)"/i);
-      theLogo     = line.match(/tvg-logo="([^"]+)"/i);
-      const logom = theLogo;
+      const logom = line.match(/tvg-logo="([^"]+)"/i);
       const grp   = line.match(/group-title="([^"]+)"/i);
       cur = { id: idm ? idm[1] : name, name, logo: logom ? logom[1] : null, group: grp ? grp[1] : null };
     } else if (line.startsWith('#EXTGRP:')) {
@@ -153,11 +156,11 @@ function parseEPG(xml) {
       const progs = res?.tv?.programme || [];
       for (const p of progs) {
         const cid = p.$?.channel || '';
-        const theStart = p.$?.start || '';
-        const theStop  = p.$?.stop  || '';
+        const start = p.$?.start || '';
+        const stop  = p.$?.stop  || '';
         const title = (Array.isArray(p.title) ? p.title[0] : p.title) || '';
         if (!map.has(cid)) map.set(cid, []);
-        map.get(cid).push({ start: theStart, stop: theStop, title });
+        map.get(cid).push({ start, stop, title });
       }
       resolve(map);
     });
@@ -272,27 +275,21 @@ const radioJsonUrl = (region) => `${base(region)}/radio.json`;
 const m3uUrl       = (region) => `${base(region)}/raw-tv.m3u8`;
 const radioM3uUrl  = (region) => `${base(region)}/raw-radio.m3u8`;
 const epgUrl       = (region) => `${base(region)}/epg.xml`;
-const logoUrl      = (region, id) => `${base(region)}/logo/${encodeURIComponent(id)}.png`;
 
 // NZ BASE
 const baseNZ        = () => `https://i.mjh.nz/nz`;
 const m3uUrlNZ      = () => `${baseNZ()}/raw-tv.m3u8`;
 const radioM3uUrlNZ = () => `${baseNZ()}/raw-radio.m3u8`;
 const epgUrlNZ      = () => `${baseNZ()}/epg.xml`;
-const logoNZUrl     = (id) => `${baseNZ()}/logo/${encodeURIComponent(id)}.png`;
 
 /* --------------------- Curated (primary) ------------------ */
-/* Hide provider branding in UI — we just call these “Curated” */
 const A1X_CURATED_PRIMARY = 'https://bit.ly/a1xstream';
 const A1X_CURATED_BACKUP  = 'https://a1xs.vip/a1xstream';
 const A1X_CURATED_DIRECT  = 'https://raw.githubusercontent.com/a1xmedia/m3u/refs/heads/main/a1x.m3u';
-
-
 const A1X_EPG_URL = 'https://bit.ly/a1xepg';
-/* -------------- UK Sports tertiary fallback (legacy) ---------- */
 const UK_SPORTS_FALLBACK = 'https://forgejo.plainrock127.xyz/Mystique-Play/Mystique/raw/branch/main/countries/uk_sports.m3u';
 
-/* ---------- Quality helpers (for curated multi-variant) --------- */
+// curated group matchers
 function norm(s='') { return String(s||'').toLowerCase(); }
 function isUHD(name = '', url = '') {
   const n = norm(name), u = norm(url);
@@ -327,7 +324,6 @@ function baseNameClean(name = '') {
     .trim();
 }
 
-/* Curated group matchers */
 const tvMatcher = (...labels) =>
   new RegExp(`^\\s*(?:${labels.join('|')})\\s*(?:TV\\s*Channels?|Channels?|TV\\s*Channel)\\s*$`, 'i');
 const sportsMatcher = (...labels) =>
@@ -356,26 +352,16 @@ async function fetchCuratedM3U() {
 
   const headers = { 'User-Agent': 'Mozilla/5.0 (AUIPTV-Addon)' };
   let text = '';
-
-  try {
-    const r1 = await fetch(A1X_CURATED_PRIMARY, { redirect: 'follow', headers });
-    text = await r1.text();
-  } catch (_) {}
-
-  if (!text || text.length < 100) {
+  const sources = [A1X_CURATED_PRIMARY, A1X_CURATED_BACKUP, A1X_CURATED_DIRECT];
+  for (const src of sources) {
     try {
-      const r2 = await fetch(A1X_CURATED_BACKUP, { redirect: 'follow', headers });
-      text = await r2.text();
+      const r = await fetch(src, { redirect: 'follow', headers });
+      if (r.ok) {
+        text = await r.text();
+        if (text && text.length >= 100) break;
+      }
     } catch (_) {}
   }
-
-  if (!text || text.length < 100) {
-    try {
-      const r3 = await fetch(A1X_CURATED_DIRECT, { redirect: 'follow', headers });
-      text = await r3.text();
-    } catch (_) {}
-  }
-
   cache.a1x.set('curated_text', { ts: Date.now(), text: String(text || '') });
   return String(text || '');
 }
@@ -390,8 +376,7 @@ async function fetchCuratedEntries() {
 }
 
 /**
- * Returns a Map(baseId -> { id, name, logo, url (default best), variants: [{label,url,rank}] })
- * Variants include HD/FHD/UHD when present. Default url is the highest-ranked reliable variant (UHD>FHD>HD>SD).
+ * Returns a Map(id -> { id, name, logo, url (default best), variants: [{label,url,rank}] })
  */
 async function getCuratedGroup(key) {
   const ck = `group:${key}:v2`;
@@ -420,9 +405,7 @@ async function getCuratedGroup(key) {
       const preferThis = /a1xs\.vip/i.test(e.url);
       if (existingIdx >= 0) {
         const existing = g.variants[existingIdx];
-        if (preferThis && !/a1xs\.vip/i.test(existing.url)) {
-          g.variants[existingIdx] = { label, url: e.url, rank };
-        }
+        if (preferThis && !/a1xs\.vip/i.test(existing.url)) g.variants[existingIdx] = { label, url: e.url, rank };
       } else {
         g.variants.push({ label, url: e.url, rank });
       }
@@ -713,10 +696,10 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
   else if (isCurated) channels = await getCuratedGroup(curatedKey);
   else channels = await getChannels(contentRegion, contentKind);
 
-const epg = (contentKind === 'tv')
-  ? (isNZ ? await getNZEPG() : (isCurated ? new Map() : await getEPG(contentRegion)))
-  : new Map();
-  
+  const epg = (contentKind === 'tv')
+    ? (isNZ ? await getNZEPG() : (isCurated ? new Map() : await getEPG(contentRegion)))
+    : new Map();
+
   const metas = [];
   for (const [cid, ch] of channels) {
     if (contentKind === 'tv') {
@@ -752,7 +735,7 @@ const epg = (contentKind === 'tv')
             : `au|${isNZ?'NZ':contentRegion}|${cid}|${contentKind}`,
         type: 'tv',
         name: ch.name,
-        poster: posterAny(isCurated?`SP:${curatedKey}`:(isNZ?'NZ':contentRegion), ch), // square for grid
+        poster: posterAny(isCurated?`SP:${curatedKey}`:(isNZ?'NZ':contentRegion), ch),
         posterShape: 'square',
         description: isNZ ? 'New Zealand TV'
                           : (isCurated ? (/sports|epl/i.test(curatedKey||'') ? 'Global Sports' : 'Global TV')
@@ -767,7 +750,7 @@ const epg = (contentKind === 'tv')
         id: `au|${isNZ?'NZ':contentRegion}|${cid}|radio`,
         type: 'tv',
         name: ch.name,
-        poster: posterAny(isNZ?'NZ':contentRegion, ch), // square for grid
+        poster: posterAny(isNZ?'NZ':contentRegion, ch),
         posterShape: 'square',
         description: isNZ ? 'New Zealand Radio' : 'Live AU Radio',
         releaseInfo: isNZ ? 'Live NZ Radio' : 'Live Radio'
@@ -826,17 +809,16 @@ builder.defineMetaHandler(async ({ type, id }) => {
   const regionKey = region === 'SP' ? `SP:${parsed.curatedKey}` : region;
 
   if (kind === 'tv') {
-    // AU/NZ EPG kept; curated EPG disabled
     const progs = (region === 'NZ')
       ? ((await getNZEPG()).get(cid) || [])
       : (region === 'SP'
-          ? [] // no curated EPG
+          ? []
           : ((await getEPG(region)).get(cid) || []));
     const desc = progs.slice(0, 8).map(p => `${fmtLocal(p.start, tz)} | ${p.title || ''}`).join(' • ');
     const nowp = nowProgramme(progs);
 
-    const squarePoster = posterAny(regionKey, ch);                     // from map.json
-    const m3uPoster    = (region === 'SP') ? null : m3uLogoAny(regionKey, ch); // no tvg-logo for curated
+    const squarePoster = posterAny(regionKey, ch);
+    const m3uPoster    = (region === 'SP') ? null : m3uLogoAny(regionKey, ch);
 
     return {
       meta: {
@@ -870,7 +852,180 @@ builder.defineMetaHandler(async ({ type, id }) => {
   }
 });
 
+/* ---------------------- Curated HLS utilities --------------------- */
+function publicBase(req) {
+  const proto = req?.headers?.['x-forwarded-proto'] || req?.protocol || 'https';
+  const host  = req?.headers?.['x-forwarded-host']  || req?.headers?.host;
+  return `${proto}://${host}`;
+}
+function absoluteUrl(u, baseUrl) {
+  try {
+    if (/^https?:\/\//i.test(u)) return u;
+    // handle URI attributes inside quotes too
+    const trimmed = String(u).replace(/^['"]|['"]$/g, '');
+    return new URL(trimmed, baseUrl).toString();
+  } catch {
+    return u;
+  }
+}
 
+async function fetchText(url, opts) {
+  const r = await fetch(url, {
+    redirect: 'follow',
+    headers: { 'User-Agent': 'Mozilla/5.0 (AUIPTV-Addon)' },
+    ...opts
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const text = await r.text();
+  const ct = r.headers.get('content-type') || 'text/plain';
+  return { text, contentType: ct };
+}
+
+/* ---------------------- CURATED REDIRECT (legacy) ------------------ */
+// Back-compat: 302 to current target (used by old installs)
+app.get('/redir/:curatedKey/:cid.m3u8', async (req, res) => {
+  try {
+    const { curatedKey, cid } = req.params;
+    const want = String(req.query.label || '').toUpperCase();
+    const group = await getCuratedGroup(curatedKey);
+    const ch = group && group.get(cid);
+    if (!ch) return res.status(404).send('Channel not found');
+
+    let target = ch.url;
+    if (want && Array.isArray(ch.variants)) {
+      const v = ch.variants.find(v => String(v.label || '').toUpperCase().includes(want));
+      if (v && v.url) target = v.url;
+    }
+    if (!target) return res.status(404).send('No URL');
+
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'no-store, max-age=0');
+    res.redirect(302, target);
+  } catch (e) {
+    res.status(502).send('Media redirect error');
+  }
+});
+
+/* --------- CURATED HLS master + per-quality dynamic playlists ------ */
+/**
+ * Master playlist URL (stable for TV/Android):
+ *   /hls/:curatedKey/:cid.m3u8
+ * Produces a small master with variants pointing to:
+ *   /p/:curatedKey/:cid/:label.m3u8
+ * Each /p fetches the upstream playlist fresh → auto-refreshes tokens
+ * (We DO NOT proxy segments — only playlists — to keep costs down.)
+ */
+app.get('/hls/:curatedKey/:cid.m3u8', async (req, res) => {
+  try {
+    const { curatedKey, cid } = req.params;
+    const group = await getCuratedGroup(curatedKey);
+    const ch = group && group.get(cid);
+    if (!ch) return res.status(404).send('Channel not found');
+
+    // Build a minimal master
+    const variants = (ch.variants && ch.variants.length) ? ch.variants : [{ label: 'Auto', url: ch.url, rank: 1 }];
+    const lines = ['#EXTM3U', '#EXT-X-VERSION:3', '#EXT-X-INDEPENDENT-SEGMENTS'];
+
+    // Order by rank (best first); we don’t know BANDWIDTH, so omit it (players still switch)
+    for (const v of variants) {
+      const label = encodeURIComponent(v.label || 'Stream');
+      const self = `${publicBase(req)}/p/${encodeURIComponent(curatedKey)}/${encodeURIComponent(cid)}/${label}.m3u8`;
+      lines.push(`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Stereo",DEFAULT=YES,AUTOSELECT=YES`);
+      lines.push(`#EXT-X-STREAM-INF:AUDIO="audio"`);
+      lines.push(self);
+    }
+
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'no-store, max-age=0');
+    res.type('application/vnd.apple.mpegurl').send(lines.join('\n') + '\n');
+  } catch (e) {
+    res.status(502).type('text/plain').send('HLS master error');
+  }
+});
+
+/**
+ * Per-quality dynamic playlist (short-cached):
+ *   /p/:curatedKey/:cid/:label.m3u8
+ * On every request we resolve to CURRENT upstream variant and fetch its playlist,
+ * then rewrite relative URIs to absolute upstream URLs.
+ */
+app.get('/p/:curatedKey/:cid/:label.m3u8', async (req, res) => {
+  const key = `p:${req.params.curatedKey}:${req.params.cid}:${req.params.label}`;
+  const cached = cache.hls.get(key);
+  if (cached && (Date.now() - cached.ts) < HLS_PROXY_TTL) {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'no-store, max-age=0');
+    return res.type('application/vnd.apple.mpegurl').send(cached.text);
+  }
+
+  try {
+    const { curatedKey, cid } = req.params;
+    const want = decodeURIComponent(String(req.params.label || ''));
+    const group = await getCuratedGroup(curatedKey);
+    const ch = group && group.get(cid);
+    if (!ch) return res.status(404).send('Channel not found');
+
+    // Resolve current upstream URL for this label (fresh each time)
+    let upstream = ch.url;
+    if (want && Array.isArray(ch.variants)) {
+      const v = ch.variants.find(v => (v.label || '').toUpperCase() === want.toUpperCase());
+      if (v?.url) upstream = v.url;
+    }
+    if (!upstream) return res.status(404).send('No variant URL');
+
+    // Fetch upstream playlist and rewrite relative URIs to absolute
+    const { text: plText } = await fetchText(upstream);
+    const baseForRel = new URL(upstream);
+    const baseUrl = `${baseForRel.protocol}//${baseForRel.host}${baseForRel.pathname.replace(/\/[^/]*$/, '/')}`;
+
+    // Also rewrite KEY and MAP URIs if present
+    const rewritten = plText.split(/\r?\n/).map(line => {
+      if (!line || line.startsWith('#')) {
+        // Rewrite URI="..." in KEY/MAP tags
+        if (/^#EXT-X-KEY:/.test(line) || /^#EXT-X-MAP:/.test(line)) {
+          return line.replace(/URI="?([^",]+)"?/i, (m, u) => `URI="${absoluteUrl(u, upstream)}"`);
+        }
+        return line;
+      }
+      // segment / sub-playlist
+      return absoluteUrl(line, baseUrl);
+    }).join('\n') + '\n';
+
+    cache.hls.set(key, { ts: Date.now(), text: rewritten });
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'no-store, max-age=0');
+    res.type('application/vnd.apple.mpegurl').send(rewritten);
+  } catch (e) {
+    res.status(502).type('text/plain').send('HLS variant error');
+  }
+});
+
+/* ---------------------- STREAM HELPERS (HLS) --------------------- */
+function needsHeaders(url) {
+  const specialDomains = [
+    'example-streaming-site.com',
+    'another-site.tv'
+  ];
+  return specialDomains.some(domain => url.includes(domain));
+}
+function getRefererForUrl(url) {
+  try {
+    const urlObj = new URL(url);
+    return `${urlObj.protocol}//${urlObj.hostname}/`;
+  } catch {
+    return 'https://www.google.com/';
+  }
+}
+function getOriginForUrl(url) {
+  try {
+    const urlObj = new URL(url);
+    return `${urlObj.protocol}//${urlObj.hostname}`;
+  } catch {
+    return 'https://www.google.com';
+  }
+}
+
+/* ---------------------- STREAM HANDLER --------------------- */
 builder.defineStreamHandler(async ({ type, id }) => {
   if (type !== 'tv') return { streams: [] };
   const parsed = parseItemId(id);
@@ -885,203 +1040,68 @@ builder.defineStreamHandler(async ({ type, id }) => {
   const ch = channels.get(cid);
   if (!ch) return { streams: [] };
 
-  if (region === 'SP' && Array.isArray(ch.variants) && ch.variants.length > 0) {
-    const seen = new Set();
-    const streams = [];
-    for (const v of ch.variants) {
-      if (!v?.url || seen.has(v.url)) continue;
-      seen.add(v.url);
-      streams.push({ url: v.url, title: v.label });
+  // Curated → serve a stable master (Auto ABR) + direct per-quality dynamic playlists
+  if (region === 'SP') {
+    const base = publicBase();
+    const master = `${base}/hls/${encodeURIComponent(parsed.curatedKey)}/${encodeURIComponent(cid)}.m3u8`;
+    const streams = [{
+      url: master,
+      title: 'Auto (ABR)',
+      behaviorHints: { notWebReady: false, bingeGroup: 'hls-master' }
+    }];
+
+    if (Array.isArray(ch.variants)) {
+      for (const v of ch.variants) {
+        if (!v?.url || !v?.label) continue;
+        const label = encodeURIComponent(v.label);
+        const vUrl = `${base}/p/${encodeURIComponent(parsed.curatedKey)}/${encodeURIComponent(cid)}/${label}.m3u8`;
+        streams.push({
+          url: vUrl,
+          title: v.label,
+          behaviorHints: { notWebReady: false, bingeGroup: 'hls-variant' }
+        });
+      }
     }
-    if (streams.length > 0) return { streams };
+    return { streams };
   }
 
-  return { streams: [{ url: ch.url, title: 'Play' }] };
-});
+  // AU/NZ direct streams
+  const streamUrl = ch.url || '';
+  const isHLS = /m3u8/i.test(streamUrl);
 
-/* ----------------------- LANDING PAGE --------------------- */
-const CONFIG_HTML = `<!DOCTYPE html><html lang="en"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<link rel="icon" href="/AUIPTVLOGO.svg" type="image/svg+xml" sizes="any">
-<title>AU IPTV v2.6.3</title><meta http-equiv="Cache-Control" content="no-store"/>
-<style>
-:root{color-scheme:dark;--bg:#0b0c0f;--card:#14161a;--muted:#9aa4b2;--text:#ecf2ff;--ok:#34c759;--okText:#04210d;--line:#22252b;--accent:#4fc3f7}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial}
-.wrap{display:grid;place-items:center;padding:28px}.card{width:min(960px,92vw);background:var(--card);border:1px solid var(--line);border-radius:18px;padding:24px 20px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
-h1{margin:0 0 6px;font-size:26px;display:flex;align-items:center;gap:8px}
-.badge{display:inline-block;line-height:1;padding:4px 8px;border-radius:999px;background:var(--accent);color:#001219;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.4px}
-.lead{margin:0 0 14px;color:var(--muted)}
-.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:12px 0}
-label{font-size:13px;color:var(--muted)}select{background:#0f1115;color:var(--text);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
-.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;border:1px solid var(--line);background:#101318;color:#fff;text-decoration:none;cursor:pointer;white-space:nowrap}
-.btn:hover{background:#0e1218}.btn-primary{background:var(--ok);border-color:var(--ok);color:var(--okText);font-weight:700}
-.btn-ghost{background:transparent}
-code{display:block;margin-top:10px;padding:10px 12px;background:#0f1115;border:1px solid var(--line);border-radius:10px;color:#a7f3d0;overflow:auto;word-break:break-all;font-size:12px}
-.hint{font-size:12px;color:var(--muted);margin-top:6px}
-details.acc{background:#0f1115;border:1px solid var(--line);border-radius:12px;margin:12px 0;overflow:hidden}
-details.acc>summary{cursor:pointer;padding:10px 12px;font-weight:700;color:var(--text);list-style:none}
-details.acc[open]>summary{border-bottom:1px solid var(--line)}
-.acc-body{padding:10px 12px}
-.section-title{margin-top:6px;font-weight:700;color:#cfe8ff}
-.group{display:flex;flex-wrap:wrap;gap:18px;align-items:center}
-</style></head><body>
-<div class="wrap"><div class="card">
-
-<h1 style="display:flex; justify-content:center; align-items:center">
-  <img src="/AUIPTVLOGO.svg" alt="" style="height:256px"/>
-</h1>
-
-<h1>
-  AU IPTV <span class="badge">v2.6.3</span>
-  <span class="spacer"></span>
-  <span id="installs" class="h1-installs" aria-live="polite" title="Total installs" style="font-size:12px;color:#9aa4b2">
-    Installs: —
-  </span>
-</h1>
-
-<p class="lead">AU + NZ live TV & radio for Stremio. Add optional international TV and Sports (curated). Pick your main AU city, tick what you want, then install. Use the <b>Genre</b> dropdown in Stremio to switch between what you enabled.</p>
-
-<hr>
-<div class="row">
-  <label for="region">Main AU City (for AU EPG)</label>
-  <select id="region">
-    <option>Adelaide</option><option selected>Brisbane</option><option>Canberra</option><option>Darwin</option>
-    <option>Hobart</option><option>Melbourne</option><option>Perth</option><option>Sydney</option>
-  </select>
-</div>
-
-<div class="row group">
-  <span class="section-title">Australia</span>
-  <label><input type="checkbox" id="auTv" checked> AU TV (Traditional/Other/Regional)</label>
-  <label><input type="checkbox" id="radio" checked> AU Radio</label>
-  <label><input type="checkbox" id="auSports"> AU Sports</label>
-</div>
-
-<details class="acc" id="nzAcc" open>
-  <summary>New Zealand</summary>
-  <div class="acc-body group">
-    <label><input type="checkbox" id="nz"> NZ TV</label>
-    <label><input type="checkbox" id="nzRadio"> NZ Radio</label>
-    <label id="nzDefaultWrap" style="display:none"><input type="checkbox" id="nzDefault"> Set NZ as default</label>
-    <label><input type="checkbox" id="nzSports"> NZ Sports</label>
-  </div>
-</details>
-
-<details class="acc" id="intlAcc">
-  <summary>International (Curated)</summary>
-  <div class="acc-body">
-    <div class="group">
-      <strong>UK</strong>
-      <label><input type="checkbox" id="ukTV"> UK TV Channels</label>
-      <label><input type="checkbox" id="ukSports"> UK Sports</label>
-    </div>
-    <div class="group" style="margin-top:8px">
-      <strong>US</strong>
-      <label><input type="checkbox" id="usTV"> US TV Channels</label>
-      <label><input type="checkbox" id="usSports"> US Sports</label>
-    </div>
-    <div class="group" style="margin-top:8px">
-      <strong>Canada</strong>
-      <label><input type="checkbox" id="caTV"> CA TV Channels</label>
-      <label><input type="checkbox" id="caSports"> CA Sports</label>
-    </div>
-    <div class="group" style="margin-top:8px">
-      <strong>Other</strong>
-      <label><input type="checkbox" id="epl"> EPL</label>
-      <label><input type="checkbox" id="euSports"> EU Sports</label>
-      <label><input type="checkbox" id="worldSports"> World Sports</label>
-    </div>
-  </div>
-</details>
-
-<div class="row">
-  <button id="open" class="btn btn-primary">Open in Stremio Web</button>
-  <a id="manifestLink" class="btn btn-ghost" href="#" target="_blank" rel="noopener">Open manifest.json</a>
-  <button id="copy" class="btn">Copy manifest URL</button>
-</div>
-
-<code id="preview">—</code>
-<div class="hint">Web installer: <span id="weburl">—</span></div>
-
-</div>
-</div>
-
-<script>
-const $ = s => document.querySelector(s);
-
-const AU_CITIES = ['Adelaide','Brisbane','Canberra','Darwin','Hobart','Melbourne','Perth','Sydney'];
-function region() {
-  const raw = ($('#region').value || 'Brisbane').trim();
-  return encodeURIComponent(raw);
-}
-function pathPrefix() {
-  const parts = [region()];
-  if (!$('#auTv').checked) parts.push('noau');
-  if ($('#radio').checked) parts.push('radio');
-  if ($('#auSports').checked) parts.push('ausports');
-  if ($('#nz').checked) parts.push('nz');
-  if ($('#nzRadio').checked) parts.push('nzradio');
-  if ($('#nzDefault').checked) parts.push('nzdefault');
-  if ($('#nzSports').checked) parts.push('nzsports');
-  if ($('#ukTV').checked) parts.push('uktv');
-  if ($('#ukSports').checked) parts.push('uksports');
-  if ($('#usTV').checked) parts.push('ustv');
-  if ($('#usSports').checked) parts.push('ussports');
-  if ($('#caTV').checked) parts.push('catv');
-  if ($('#caSports').checked) parts.push('casports');
-  if ($('#euSports').checked) parts.push('eusports');
-  if ($('#worldSports').checked) parts.push('worldsports');
-  if ($('#epl').checked) parts.push('epl');
-  return '/' + parts.join('/');
-}
-function manifestUrl() { return location.origin + pathPrefix() + '/manifest.json'; }
-function webInstall(u) { return 'https://web.stremio.com/#/addons?addon=' + encodeURIComponent(u); }
-function update() {
-  $('#nzDefaultWrap').style.display = $('#nz').checked ? 'inline-block' : 'none';
-  if (!$('#nz').checked) $('#nzDefault').checked = false;
-  const m = manifestUrl();
-  const w = webInstall(m);
-  $('#preview').textContent = m;
-  $('#weburl').textContent = w;
-  $('#manifestLink').href = m;
-}
-['change','input'].forEach(ev=>{ document.addEventListener(ev, (e)=>{ if (e.target && e.target.id) update(); }); });
-async function copyToClipboard(text) {
-  try { await navigator.clipboard.writeText(text); }
-  catch {
-    const ta = document.createElement('textarea');
-    ta.value = text; ta.setAttribute('readonly',''); ta.style.position='absolute'; ta.style.left='-9999px';
-    document.body.appendChild(ta); ta.select();
-    try { document.execCommand('copy'); } catch {}
-    document.body.removeChild(ta);
+  if (isHLS) {
+    return {
+      streams: [{
+        name: '🌐 HLS Stream',
+        description: 'Direct HLS stream',
+        url: streamUrl,
+        behaviorHints: { notWebReady: false, bingeGroup: 'hls-direct' },
+        ...(needsHeaders(streamUrl) && {
+          proxyHeaders: {
+            request: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+              'Referer': getRefererForUrl(streamUrl),
+              'Origin': getOriginForUrl(streamUrl)
+            }
+          }
+        })
+      }]
+    };
   }
-}
-$('#open').addEventListener('click', async () => {
-  update();
-  const m = manifestUrl();
-  await copyToClipboard(m);
-  window.open(webInstall(m), '_blank', 'noopener,noreferrer');
-});
-$('#manifestLink').addEventListener('click', async (e) => {
-  e.preventDefault(); update();
-  const m = manifestUrl();
-  await copyToClipboard(m);
-  window.open(m, '_blank', 'noopener,noreferrer');
-});
-$('#copy').addEventListener('click', async () => {
-  update();
-  const m = manifestUrl();
-  await copyToClipboard(m);
-  const btn = document.getElementById('copy');
-  const t = btn.textContent; btn.textContent = 'Copied!';
-  setTimeout(()=>btn.textContent=t, 1200);
-});
-update();
-</script>
 
-</body></html>`;
+  // Non-HLS direct streams
+  return {
+    streams: [{
+      name: '📺 Direct Stream',
+      description: 'Direct video stream',
+      url: streamUrl,
+      behaviorHints: { notWebReady: false }
+    }]
+  };
+});
 
-/* ----------------------- EXPRESS ROUTES ------------------- */
+/* ----------------------- STATIC UI + ROUTES ----------------------- */
+// Global CORS / no-store
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -1090,17 +1110,23 @@ app.use((req, res, next) => {
   next();
 });
 
+// Health and stats
 app.get('/healthz', (_req, res) => res.type('text/plain').send('ok'));
-app.get('/', (_req, res) => res.type('html').send(CONFIG_HTML));
+app.get('/stats', (_req, res) => res.json({ installs: _memStats.installs || 0 }));
 
-// stats endpoint for landing page — in-memory only
-app.get('/stats', (_req, res) => {
-  res.json({ installs: _memStats.installs || 0 });
-});
+// Serve static site from /public (index.html, AUIPTVLOGO.svg, etc.)
+const STATIC_DIR = path.join(__dirname, 'public');
+app.use(express.static(STATIC_DIR, {
+  extensions: ['html'],
+  setHeaders(res) { res.set('Cache-Control', 'no-store, max-age=0'); }
+}));
 
-// serve logo + favicon aliases
+// Explicit root (helps on some hosts)
+app.get('/', (_req, res) => res.sendFile(path.join(STATIC_DIR, 'index.html')));
+
+// Fallback logo route if you keep the SVG outside /public (optional)
 app.get(['/AUIPTVLOGO.svg','/favicon.svg'], (_req, res) => {
-  res.type('image/svg+xml').sendFile(path.join(__dirname, 'AUIPTVLOGO.svg'));
+  res.type('image/svg+xml').sendFile(path.join(STATIC_DIR, 'AUIPTVLOGO.svg'));
 });
 app.get('/favicon.ico', (_req, res) => res.redirect(302, '/AUIPTVLOGO.svg'));
 
@@ -1148,11 +1174,11 @@ function manifestResponderV2(req, res) {
     man.stremioAddonsConfig = STREMIO_ADDONS_CONFIG;
     res.json(man);
   } catch (e) {
-    console.error('manifest v3 error', e);
     res.status(500).json({ error: e?.message || String(e) });
   }
 }
 
+// v3: region + flags → /manifest.json
 app.get(/^\/[^/]+(?:\/[^/]+)*\/manifest\.json$/, manifestResponderV2);
 
 // Legacy v1 endpoints (kept for compatibility with old installs)
@@ -1189,7 +1215,6 @@ function manifestResponderLegacy(req, res) {
     man.stremioAddonsConfig = STREMIO_ADDONS_CONFIG;
     res.json(man);
   } catch (e) {
-    console.error('manifest legacy error', e);
     res.status(500).json({ error: e?.message || String(e) });
   }
 }
@@ -1197,6 +1222,7 @@ function manifestResponderLegacy(req, res) {
 app.get('/:region/manifest.json', manifestResponderLegacy);
 app.get('/:region/radio/manifest.json', manifestResponderLegacy);
 
+// default manifest (root)
 app.get('/manifest.json', (req, res) => {
   const man = buildManifestV3(DEFAULT_REGION, { auTV: true, radio: true });
   man.logo = man.icon = `${baseUrl(req)}/AUIPTVLOGO.svg`;
@@ -1204,7 +1230,9 @@ app.get('/manifest.json', (req, res) => {
   res.json(man);
 });
 
+// Stremio SDK router must stay AFTER the static/UI routes
 const sdkRouter = getRouter(builder.getInterface());
+// keep URL slicing for SDK paths
 app.use((req, res, next) => {
   const targets = ['/catalog/','/meta/','/stream/'];
   let idx = -1;
@@ -1219,7 +1247,7 @@ app.use('/', sdkRouter);
 
 module.exports.handler = serverless(app);
 
-//if (require.main === module) {
-//  const PORT = process.env.PORT || 7000;
-//  app.listen(PORT, () => console.log('Listening on', PORT));
-//}
+if (require.main === module) {
+  const PORT = process.env.PORT || 7000;
+  app.listen(PORT, () => console.log('Listening on', PORT));
+}

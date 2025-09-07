@@ -1,0 +1,274 @@
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="/AUIPTVLOGO.svg" type="image/svg+xml" sizes="any">
+  <title>AU IPTV v2.6.3 - Live TV & Radio</title>
+  <meta http-equiv="Cache-Control" content="no-store">
+  <style>
+    :root { --bg:#0b0c0f; --card:#14161a; --muted:#9aa4b2; --text:#ecf2ff; --ok:#34c759; --ok-text:#04210d; --line:#22252b; --accent:#4fc3f7; --gradient:linear-gradient(135deg,#4fc3f7 0%,#34c759 100%) }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{min-height:100vh;background:var(--bg);color:var(--text);font-family:'Inter',ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;overflow-x:hidden}
+    .bg-svg{position:fixed;top:0;left:0;width:100%;height:100%;opacity:.1;z-index:-1;animation:pulse-bg 10s infinite ease-in-out}
+    @keyframes pulse-bg{0%,100%{opacity:.1}50%{opacity:.15}}
+    .wrap{display:grid;place-items:center;padding:2rem;min-height:100vh}
+    .card{width:min(960px,92vw);background:var(--card);border:1px solid var(--line);border-radius:1.5rem;padding:2rem;box-shadow:0 12px 40px rgba(0,0,0,.3);animation:fade-in .5s ease-out}
+    @keyframes fade-in{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+    h1{font-family:'Poppins',sans-serif;font-size:2rem;display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem;justify-content:center}
+    .logo{height:280px;transition:transform .3s ease,filter .3s ease}
+    .logo:hover{transform:scale(1.05);filter:drop-shadow(0 0 10px rgba(79,195,247,.5))}
+    .badge{display:inline-block;padding:.3rem .6rem;border-radius:999px;background:var(--accent);color:#001219;font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.05rem}
+    .lead{margin-bottom:1.5rem;color:var(--muted);font-size:1rem;text-align:center}
+    hr{border:none;border-top:1px solid var(--line);margin:1.5rem 0}
+    .row{display:flex;flex-wrap:wrap;gap:1rem;align-items:center;margin:1rem 0}
+    label{font-size:.9rem;color:var(--text);display:flex;align-items:center;gap:.5rem}
+    select{background:#0f1115;color:var(--text);border:1px solid var(--line);border-radius:.75rem;padding:.6rem .8rem;font-size:.9rem;transition:border-color .3s ease}
+    select:focus{outline:none;border-color:var(--accent)}
+    .toggle{position:relative;display:inline-block;width:40px;height:20px}
+    .toggle input{opacity:0;width:0;height:0}
+    .slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#2c2f36;border-radius:20px;transition:background .3s ease}
+    .slider:before{position:absolute;content:"";height:16px;width:16px;left:2px;bottom:2px;background:var(--text);border-radius:50%;transition:transform .3s ease}
+    input:checked + .slider{background:var(--ok)}
+    input:checked + .slider:before{transform:translateX(20px)}
+    .btn{display:inline-flex;align-items:center;gap:.5rem;padding:.7rem 1rem;border-radius:.75rem;border:1px solid var(--line);background:#101318;color:var(--text);text-decoration:none;cursor:pointer;font-size:.9rem;transition:all .3s ease}
+    .btn:hover{background:#1a1e25;border-color:var(--accent);transform:translateY(-2px)}
+    .btn-primary{background:var(--gradient);border:none;color:var(--ok-text);font-weight:600;animation:pulse 2s infinite ease-in-out}
+    .btn-primary:hover{transform:scale(1.05);box-shadow:0 0 15px rgba(79,195,247,.5)}
+    @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.03)}}
+    .btn-ghost{background:transparent;border-color:var(--accent)}
+    code{display:block;margin-top:1rem;padding:.8rem;background:#0f1115;border:1px solid var(--line);border-radius:.75rem;color:#a7f3d0;overflow:auto;word-break:break-all;font-size:.8rem}
+    .hint{font-size:.8rem;color:var(--muted);margin-top:.5rem}
+    details.acc{background:#0f1115;border:1px solid var(--line);border-radius:.75rem;margin:1rem 0;overflow:hidden;transition:all .3s ease}
+    details.acc>summary{cursor:pointer;padding:.8rem 1rem;font-weight:600;color:var(--text);list-style:none;background:var(--gradient);background-size:200%;background-position:0%;transition:background-position .3s ease}
+    details.acc[open]>summary{border-bottom:1px solid var(--line);background-position:100%}
+    .acc-body{padding:1rem}
+    .section-title{font-weight:600;color:#cfe8ff;margin-bottom:.5rem}
+    .group{display:flex;flex-wrap:wrap;gap:1rem;align-items:center}
+    @media (max-width:600px){.card{padding:1.5rem}h1{font-size:1.5rem}.logo{height:200px}.row{flex-direction:column;align-items:stretch}.group{flex-direction:column;align-items:flex-start}.btn{width:100%;justify-content:center}}
+  </style>
+</head>
+<body>
+  <svg class="bg-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
+    <defs><radialGradient id="grad" cx="50%" cy="50%" r="50%"><stop offset="0%" style="stop-color:#4fc3f7;stop-opacity:.3"/><stop offset="100%" style="stop-color:#34c759;stop-opacity:0"/></radialGradient></defs>
+    <rect width="100" height="100" fill="url(#grad)"/>
+  </svg>
+
+  <div class="wrap"><div class="card">
+    <h1><img src="/AUIPTVLOGO.svg" alt="AU IPTV Logo" class="logo"></h1>
+    <h1>AU IPTV <span class="badge">v2.6.3</span></h1>
+    <p class="lead">Stream live AU & NZ TV and radio with curated international channels and sports. Select your AU city, choose content, and install in Stremio.</p>
+
+    <hr>
+    <div class="row">
+      <label for="region">Main AU City (for EPG)</label>
+      <select id="region">
+        <option>Adelaide</option><option selected>Brisbane</option><option>Canberra</option><option>Darwin</option>
+        <option>Hobart</option><option>Melbourne</option><option>Perth</option><option>Sydney</option>
+      </select>
+    </div>
+
+    <div class="row group">
+      <label><span class="toggle"><input type="checkbox" id="allContent"><span class="slider"></span></span>All Content</label>
+    </div>
+
+    <div class="row group">
+      <span class="section-title">Australia</span>
+      <label><span class="toggle"><input type="checkbox" id="auTv" checked><span class="slider"></span></span>AU TV</label>
+      <label><span class="toggle"><input type="checkbox" id="radio" checked><span class="slider"></span></span>AU Radio</label>
+      <label><span class="toggle"><input type="checkbox" id="auSports"><span class="slider"></span></span>AU Sports</label>
+    </div>
+
+    <!-- NZ starts CLOSED by default -->
+    <details class="acc" id="nzAcc">
+      <summary>New Zealand</summary>
+      <div class="acc-body group">
+        <label><span class="toggle"><input type="checkbox" id="nz"><span class="slider"></span></span>NZ TV</label>
+        <label><span class="toggle"><input type="checkbox" id="nzRadio"><span class="slider"></span></span>NZ Radio</label>
+        <label id="nzDefaultWrap" style="display:none"><span class="toggle"><input type="checkbox" id="nzDefault"><span class="slider"></span></span>Set NZ as default</label>
+        <label><span class="toggle"><input type="checkbox" id="nzSports"><span class="slider"></span></span>NZ Sports</label>
+      </div>
+    </details>
+
+    <details class="acc" id="intlAcc">
+      <summary>International (Curated)</summary>
+      <div class="acc-body">
+        <div class="group">
+          <span class="section-title">UK</span>
+          <label><span class="toggle"><input type="checkbox" id="ukTV"><span class="slider"></span></span>UK TV</label>
+          <label><span class="toggle"><input type="checkbox" id="ukSports"><span class="slider"></span></span>UK Sports</label>
+        </div>
+        <div class="group">
+          <span class="section-title">US</span>
+          <label><span class="toggle"><input type="checkbox" id="usTV"><span class="slider"></span></span>US TV</label>
+          <label><span class="toggle"><input type="checkbox" id="usSports"><span class="slider"></span></span>US Sports</label>
+        </div>
+        <div class="group">
+          <span class="section-title">Canada</span>
+          <label><span class="toggle"><input type="checkbox" id="caTV"><span class="slider"></span></span>CA TV</label>
+          <label><span class="toggle"><input type="checkbox" id="caSports"><span class="slider"></span></span>CA Sports</label>
+        </div>
+        <div class="group">
+          <span class="section-title">Other</span>
+          <label><span class="toggle"><input type="checkbox" id="epl"><span class="slider"></span></span>EPL</label>
+          <label><span class="toggle"><input type="checkbox" id="euSports"><span class="slider"></span></span>EU Sports</label>
+          <label><span class="toggle"><input type="checkbox" id="worldSports"><span class="slider"></span></span>World Sports</label>
+        </div>
+      </div>
+    </details>
+
+    <div class="row">
+      <button id="open" class="btn btn-primary" aria-label="Open in Stremio Web">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm3.7-9.3-4-4a1 1 0 0 0-1.4 0 1 1 0 0 0 0 1.4l3.3 3.3H9a1 1 0 0 0 0 2h6a1 1 0 0 0 .7-.3 1 1 0 0 0 0-1.4l-3.3-3.3z"/></svg>
+        Open in Stremio
+      </button>
+      <a id="manifestLink" class="btn btn-ghost" href="#" target="_blank" rel="noopener" aria-label="Open manifest.json">View Manifest</a>
+      <button id="copy" class="btn" aria-label="Copy manifest URL">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>
+        Copy URL
+      </button>
+    </div>
+
+    <code id="preview">—</code>
+    <div class="hint">Web installer: <span id="weburl">—</span></div>
+
+    <hr>
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <div class="hint">Enjoying AU IPTV? Support its development!</div>
+      <div class="group">
+        <a class="btn" href="https://ko-fi.com/joshargh" target="_blank" rel="noopener" aria-label="Support on Ko-fi">
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 5c-.55 0-1 .45-1 1v8a4 4 0 0 0 4 4h7.5a6.5 6.5 0 0 0 0-13H3zm10.5 2H4v7a2 2 0 0 0 2 2h7.5a4.5 4.5 0 0 0 0-9zM8.5 9a2.5 2.5 0 0 1 2.1 3.8l-.1.16l-.33.44l-1.67 2.1l-1.67-2.1l-.33-.44A2.5 2.5 0 0 1 8.5 9z"/></svg>
+          Ko-fi
+        </a>
+        <a class="btn" href="https://buymeacoffee.com/joshargh" target="_blank" rel="noopener" aria-label="Buy Me a Coffee">
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M5 4h11a2 2 0 0 1 2 2l-1 9a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5L3 6a2 2 0 0 1 2-2m12 2H5l1 9a3 3 0 0 0 3 3h3a3 3 0 0 0 3-3zM6 7h10v2H6z"/></svg>
+          Buy Me a Coffee
+        </a>
+        <a class="btn" href="https://paypal.me/joshargh" target="_blank" rel="noopener" aria-label="Donate via PayPal">
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7.8 20H5.5a1 1 0 0 1-1-.86L3 5.86A1 1 0 0 1 3.99 5H13c3.4 0 5.8 1.64 5.8 4.68c0 3.4-2.72 5.32-6.3 5.32h-2.4l-.6 5zm7-13H6.2l1.02 9H13c2.68 0 4.3-1.2 4.3-3.32S16.58 7 14.8 7z"/></svg>
+          PayPal
+        </a>
+      </div>
+    </div>
+  </div></div>
+
+<script>
+  // ---- helpers / state ----
+  const q  = id => document.getElementById(id);
+  const ALL_CHECKBOXES = ['auTv','radio','auSports','nz','nzRadio','nzSports','ukTV','ukSports','usTV','usSports','caTV','caSports','epl','euSports','worldSports'];
+  const NZ_CHECKBOXES  = ['nz','nzRadio','nzSports'];
+  const INTL_CHECKBOXES = ['ukTV','ukSports','usTV','usSports','caTV','caSports','epl','euSports','worldSports'];
+  let BULK = false;
+
+  // ---- URL builders (same flags your backend expects) ----
+  function region() {
+    const raw = (q('region').value || 'Brisbane').trim();
+    return encodeURIComponent(raw);
+  }
+  function pathPrefix() {
+    const parts = [region()];
+    if (!q('auTv').checked) parts.push('noau');
+    if (q('radio').checked) parts.push('radio');
+    if (q('auSports').checked) parts.push('ausports');
+    if (q('nz').checked) parts.push('nz');
+    if (q('nzRadio').checked) parts.push('nzradio');
+    if (q('nzDefault').checked) parts.push('nzdefault');
+    if (q('nzSports').checked) parts.push('nzsports');
+    if (q('ukTV').checked) parts.push('uktv');
+    if (q('ukSports').checked) parts.push('uksports');
+    if (q('usTV').checked) parts.push('ustv');
+    if (q('usSports').checked) parts.push('ussports');
+    if (q('caTV').checked) parts.push('catv');
+    if (q('caSports').checked) parts.push('casports');
+    if (q('euSports').checked) parts.push('eusports');
+    if (q('worldSports').checked) parts.push('worldsports');
+    if (q('epl').checked) parts.push('epl');
+    return '/' + parts.join('/');
+  }
+  function webInstall(u) { return 'https://web.stremio.com/#/addons?addon=' + encodeURIComponent(u); }
+
+  // ---- UI sync ----
+  function syncAllToggle() {
+    if (BULK) return;
+    q('allContent').checked = ALL_CHECKBOXES.every(id => q(id)?.checked);
+  }
+  function setAllContent(checked) {
+    BULK = true;
+    if (checked) {
+      // Check EVERYTHING except NZ default
+      ALL_CHECKBOXES.forEach(id => { const el = q(id); if (el) el.checked = true; });
+      q('nzDefault').checked = false;
+      // open accordions
+      q('nzAcc').open = true;
+      q('intlAcc').open = true;
+    } else {
+      // Revert to AU-only: uncheck NZ + International; keep AU selections as-is
+      [...NZ_CHECKBOXES, ...INTL_CHECKBOXES].forEach(id => { const el = q(id); if (el) el.checked = false; });
+      q('nzDefault').checked = false;
+      // close accordions
+      q('nzAcc').open = false;
+      q('intlAcc').open = false;
+    }
+    BULK = false;
+    update();
+  }
+
+  function update() {
+    // NZ default visibility
+    q('nzDefaultWrap').style.display = q('nz').checked ? 'inline-block' : 'none';
+    if (!q('nz').checked) q('nzDefault').checked = false;
+
+    syncAllToggle();
+
+    const m = location.origin + pathPrefix() + '/manifest.json';
+    q('preview').textContent = m;
+    q('weburl').textContent = webInstall(m);
+    q('manifestLink').href = m;
+  }
+
+  // ---- events ----
+  q('allContent').addEventListener('change', () => setAllContent(q('allContent').checked));
+
+  ['change','input'].forEach(ev => {
+    document.addEventListener(ev, (e) => {
+      if (!e.target?.id) return;
+      if (e.target.id === 'allContent') return;
+      if (BULK) return;
+      syncAllToggle();
+      update();
+    });
+  });
+
+  // open link/copy actions
+  async function copyToClipboard(text) {
+    try { await navigator.clipboard.writeText(text); }
+    catch {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.setAttribute('readonly',''); ta.style.position='absolute'; ta.style.left='-9999px';
+      document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch {}
+      document.body.removeChild(ta);
+    }
+  }
+  q('open').addEventListener('click', async () => {
+    update(); const m = location.origin + pathPrefix() + '/manifest.json';
+    await copyToClipboard(m); window.open(webInstall(m), '_blank', 'noopener,noreferrer');
+  });
+  q('manifestLink').addEventListener('click', async (e) => {
+    e.preventDefault(); update(); const m = location.origin + pathPrefix() + '/manifest.json';
+    await copyToClipboard(m); window.open(m, '_blank', 'noopener,noreferrer');
+  });
+  q('copy').addEventListener('click', async () => {
+    update(); const m = location.origin + pathPrefix() + '/manifest.json';
+    await copyToClipboard(m); const btn = q('copy'); const t = btn.textContent; btn.textContent = 'Copied!'; setTimeout(()=>btn.textContent=t,1200);
+  });
+
+  // ---- initial state ----
+  // Master "All Content" OFF by default; AU TV + AU Radio already checked in markup; NZ/Intl accordions closed.
+  q('allContent').checked = false;
+  q('nzAcc').open = false;
+  q('intlAcc').open = false;
+  q('nzDefault').checked = false;
+  update();
+</script>
+
+</body>
+</html>
