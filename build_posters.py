@@ -1,150 +1,121 @@
 #!/usr/bin/env python3
-# requires: pip install requests pillow
+# requires: pip install aiohttp aiofiles pillow tqdm
 # optional: pip install cairosvg
 
-import os, re, io, json, zipfile, urllib.parse, base64, csv, time
+import os
+import re
+import io
+import json
+import zipfile
+import urllib.parse
+import base64
+import csv
+import time
+import asyncio
+import aiohttp
+import aiofiles
 from typing import Dict, Tuple, Iterable, Optional
-import requests
+from concurrent.futures import ThreadPoolExecutor
 from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
+from tqdm.asyncio import tqdm
 
 try:
     import cairosvg  # optional, for SVG -> PNG
 except Exception:
     cairosvg = None
 
-INTL_REGIONS = []  # e.g. ["sg","my","hk","de","nl"] if you want those i.mjh.nz regions
+INTL_REGIONS: list[str] = []  # e.g. ["sg","my","hk","de","nl"]
 
 # === Config ===
 ROOT = os.path.dirname(__file__)
 OUT_DIR = os.path.join(ROOT, "images")
 SIZE = 512
 PAD = 12
-BG_DARK  = (24, 24, 24, 255)
+BG_DARK = (24, 24, 24, 255)
 BG_LIGHT = (240, 240, 240, 255)
 
-REGIONS = ['Adelaide','Brisbane','Canberra','Darwin','Hobart','Melbourne','Perth','Sydney']
+REGIONS = ['Adelaide', 'Brisbane', 'Canberra', 'Darwin', 'Hobart', 'Melbourne', 'Perth', 'Sydney']
+
 A1X_SOURCES = (
     "https://bit.ly/a1xstream",
     "https://a1xs.vip/a1xstream",
     "https://raw.githubusercontent.com/a1xmedia/m3u/refs/heads/main/a1x.m3u",
 )
-EXTRAS_PATH = os.path.join(ROOT, "extras.m3u")  # optional pasted block
 
-# optional curated map candidates (root-level). We ignore images/map.json (our output)
+EXTRAS_URLS = (
+    os.getenv("EXTRAS_URL") or
+    "https://gist.githubusercontent.com/One800burner/dae77ddddc1b83d3a4d7b34d2bd96a5e/raw/1roguevip.m3u",
+)
+EXTRAS_PATH = os.path.join(ROOT, "extras.m3u")
+
 INPUT_MAP_CANDIDATES = [
     os.path.join(ROOT, "map.json"),
     os.path.join(ROOT, "curated.json"),
     os.path.join(ROOT, "curated.map.json"),
 ]
 
-# === HTTP session with UA + retries ===
-SESSION = requests.Session()
-SESSION.headers.update({
-    "User-Agent": "Mozilla/5.0 (compatible; mjh-logo-downloader/1.0; +https://example.local)",
-    "Accept": "*/*",
-})
-ADAPTER = requests.adapters.HTTPAdapter(max_retries=3)
-SESSION.mount("http://", ADAPTER)
-SESSION.mount("https://", ADAPTER)
+# === HTTP Config ===
+HTTP_TIMEOUT = 25
+MAX_CONCURRENT_REQUESTS = 50  # Adjust based on system/network
+MAX_WORKERS = 16  # Match CPU threads
 
 # === Helpers ===
 def slugify(s: str) -> str:
-    s = s.lower()
-    s = re.sub(r'[^a-z0-9]+', '-', s)
-    return s.strip('-')
+    return re.sub(r'[^a-z0-9]+', '-', s.lower()).strip('-')
 
-def get(url: str, timeout=25) -> str:
-    r = SESSION.get(url, timeout=timeout, allow_redirects=True)
-    r.raise_for_status()
-    return r.text
+async def get_text(session: aiohttp.ClientSession, url: str, semaphore: asyncio.Semaphore) -> str:
+    async with semaphore:
+        async with session.get(url, timeout=HTTP_TIMEOUT, allow_redirects=True) as r:
+            r.raise_for_status()
+            return await r.text()
 
-def get_bytes(url: str, timeout=25) -> bytes:
-    # data: URLs support
+async def get_bytes(session: aiohttp.ClientSession, url: str, semaphore: asyncio.Semaphore) -> bytes:
     if url.startswith("data:"):
-        # data:[<mediatype>][;base64],<data>
+        header, data = url.split(",", 1)
+        if ";base64" in header:
+            return base64.b64decode(data)
+        return data.encode("utf-8", "ignore")
+
+    async with semaphore:
+        headers = {}
         try:
-            header, data = url.split(",", 1)
-            if ";base64" in header:
-                return base64.b64decode(data)
-            else:
-                return data.encode("utf-8", "ignore")
+            uo = urllib.parse.urlparse(url)
+            origin = f"{uo.scheme}://{uo.netloc}"
+            headers["Referer"] = origin + "/"
+            headers["Origin"] = origin
         except Exception:
-            raise
-    r = SESSION.get(url, timeout=timeout, allow_redirects=True)
-    r.raise_for_status()
-    # SVG -> PNG if possible
-    ct = r.headers.get("Content-Type", "").lower()
-    if ("svg" in ct or url.lower().endswith(".svg")) and r.content:
-        if cairosvg:
-            try:
-                return cairosvg.svg2png(bytestring=r.content, output_width=SIZE, output_height=SIZE)
-            except Exception:
-                # fall back to placeholder
-                return text_placeholder_png(os.path.splitext(os.path.basename(url))[0])
-        else:
-            # no converter installed -> placeholder
-            return text_placeholder_png(os.path.splitext(os.path.basename(url))[0])
-    return r.content
+            pass
+
+        async with session.get(url, timeout=HTTP_TIMEOUT, allow_redirects=True, headers=headers) as r:
+            r.raise_for_status()
+            content = await r.read()
+            ct = r.headers.get("Content-Type", "").lower()
+            if ("svg" in ct or url.lower().endswith(".svg")) and content and cairosvg:
+                try:
+                    return cairosvg.svg2png(bytestring=content, output_width=SIZE, output_height=SIZE)
+                except Exception:
+                    return text_placeholder_png(os.path.splitext(os.path.basename(url))[0])
+            return content
 
 def _parse_attr_pairs(attr_str: str) -> dict:
-    """
-    Robust key="value" or key='value' scanner that tolerates missing quotes and odd spacing.
-    Returns a dict of attributes found in the #EXTINF header segment.
-    """
     attrs = {}
-    i, n = 0, len(attr_str)
-    while i < n:
-        while i < n and attr_str[i] in ' ,\t':
-            i += 1
-        if i >= n:
-            break
-        k0 = i
-        while i < n and attr_str[i] not in '=\t ,':
-            i += 1
-        key = attr_str[k0:i].strip()
-        if i < n and attr_str[i] == '=':
-            i += 1
-        val = ""
-        if i < n and attr_str[i] in ('"', "'"):
-            quote = attr_str[i]
-            i += 1
-            v0 = i
-            while i < n and attr_str[i] != quote:
-                i += 1
-            val = attr_str[v0:i]
-            if i < n and attr_str[i] == quote:
-                i += 1
-        else:
-            v0 = i
-            while i < n and attr_str[i] not in ' ,\t':
-                i += 1
-            val = attr_str[v0:i].strip()
-        if key:
-            attrs[key] = val
+    for pair in re.split(r'\s*,\s*|\s+', attr_str.strip()):
+        if '=' in pair:
+            key, val = pair.split('=', 1)
+            val = val.strip('"\'')
+            if key:
+                attrs[key] = val
     return attrs
 
 def parse_m3u_entries(text: str):
-    """
-    Yield dicts: {id, name, logo} from an M3U/EXTINF block.
-    Tolerant of odd quotes/attrs. Yields when we hit the URL line after #EXTINF.
-    """
     idv = name = logo = None
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        if line.startswith('#EXTM3U'):
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith('#EXTM3U'):
             continue
         if line.startswith('#EXTINF'):
-            if ',' in line:
-                header, disp = line.split(',', 1)
-            else:
-                header, disp = line, ""
-            try:
-                attr_str = header.split(' ', 1)[1]
-            except IndexError:
-                attr_str = ""
-
+            header, disp = line.split(',', 1) if ',' in line else (line, "")
+            attr_str = header.split(' ', 1)[1] if ' ' in header else ""
             attrs = _parse_attr_pairs(attr_str)
             logo = attrs.get('tvg-logo') or attrs.get('logo')
             if not logo:
@@ -168,44 +139,35 @@ def nz_logo(cid: str) -> str:
 def is_dark_rgba(img: Image.Image) -> bool:
     s = img.copy()
     s.thumbnail((256, 256), Image.LANCZOS)
-    px = s.getdata()
     tot = cnt = 0.0
-    for r, g, b, a in px:
+    for r, g, b, a in s.getdata():
         if a < 20:
             continue
         lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
-        tot += lum; cnt += 1
-    if cnt == 0:
-        return False
-    return (tot / cnt) < 60.0
+        tot += lum
+        cnt += 1
+    return cnt > 0 and (tot / cnt) < 60.0
 
 def text_placeholder_png(text: str) -> bytes:
-    """
-    Generate a simple PNG with the channel name if image is SVG/no converter/unreadable.
-    Ensures we don't silently drop entries.
-    """
     text = (text or "logo").replace("-", " ").strip()[:40]
-    im = Image.new("RGBA", (SIZE, SIZE), (24,24,24,255))
+    im = Image.new("RGBA", (SIZE, SIZE), BG_DARK)
     draw = ImageDraw.Draw(im)
-    # Try to fit text roughly
     try:
         font = ImageFont.truetype("arial.ttf", 36)
     except Exception:
         font = ImageFont.load_default()
-    tw, th = draw.textbbox((0,0), text, font=font)[2:]
-    draw.text(((SIZE - tw)//2, (SIZE - th)//2), text, font=font, fill=(240,240,240,255))
+    _, _, tw, th = draw.textbbox((0, 0), text, font=font)
+    draw.text(((SIZE - tw) // 2, (SIZE - th) // 2), text, font=font, fill=BG_LIGHT)
     buf = io.BytesIO()
     im.save(buf, format="PNG")
     return buf.getvalue()
 
-def pad_save_png(buf: bytes, out_path: str):
+def pad_save_png(buf: bytes, out_path: str) -> Optional[str]:
     try:
         im = Image.open(io.BytesIO(buf)).convert("RGBA")
     except UnidentifiedImageError:
-        # Try treating it as text placeholder (last resort)
         buf = text_placeholder_png(os.path.splitext(os.path.basename(out_path))[0])
         im = Image.open(io.BytesIO(buf)).convert("RGBA")
-
     bg = BG_LIGHT if is_dark_rgba(im) else BG_DARK
     inner = SIZE - (2 * PAD)
     im.thumbnail((inner, inner), Image.LANCZOS)
@@ -214,16 +176,9 @@ def pad_save_png(buf: bytes, out_path: str):
     y = PAD + (inner - im.height) // 2
     canvas.paste(im, (x, y), im)
     canvas.save(out_path, format="PNG")
+    return None
 
 def load_curated_from_map():
-    """
-    Load curated ids/logos from a root-level JSON map (US/UK/CA/SP etc).
-    Supports:
-      1) flat dict: { "<id>": "<logo_url>", ... }
-      2) grouped dict: { "US": [ {id,logo}, ... ], "UK": [...], "SP:sports":[...] }
-      3) list of {id,logo}
-      4) { "channels": [ {id,logo}, ... ] }
-    """
     out = []
     out_map_path = os.path.join(OUT_DIR, "map.json")
     for p in INPUT_MAP_CANDIDATES:
@@ -236,7 +191,7 @@ def load_curated_from_map():
             continue
 
         def push(idv, logo):
-            if idv and logo and isinstance(logo, str) and logo.startswith(("http://","https://","data:")):
+            if idv and logo and isinstance(logo, str) and logo.startswith(("http://", "https://", "data:")):
                 out.append((idv, logo))
 
         if isinstance(data, dict):
@@ -263,173 +218,155 @@ def load_curated_from_map():
             break
     return out
 
-def build_curated_indexes(pairs: Iterable[Tuple[str,str]]):
-    """
-    Build multiple lookup keys to maximize matches (id, name, slug).
-    Returns (by_id, by_slug) where both map str->logo_url.
-    """
-    by_id: Dict[str,str] = {}
-    by_slug: Dict[str,str] = {}
+def build_curated_indexes(pairs: Iterable[Tuple[str, str]]):
+    by_id: Dict[str, str] = {}
+    by_slug: Dict[str, str] = {}
     for cid, logo in pairs:
         by_id[cid] = logo
         by_slug[slugify(cid)] = logo
     return by_id, by_slug
 
-# === Sources ===
-def fetch_all_channels():
+async def fetch_all_channels(session: aiohttp.ClientSession, semaphore: asyncio.Semaphore):
     curated_pairs = load_curated_from_map()
     curated_by_id, curated_by_slug = build_curated_indexes(curated_pairs)
+    channels = []
 
-    # Use curated seeds first (ensures they're written)
     for cid, logo in curated_pairs:
-        yield (cid, logo, "curated")
+        channels.append((cid, logo, "curated-seed"))
 
-    # AU TV + AU Radio (all cities)
-    for region in REGIONS:
-        # TV
+    async def fetch_m3u(url, source_prefix):
         try:
-            m3u = get(f"https://i.mjh.nz/au/{urllib.parse.quote(region)}/raw-tv.m3u8")
+            m3u = await get_text(session, url, semaphore)
+            if len(m3u) < 100 and source_prefix == "a1x":
+                return
             for e in parse_m3u_entries(m3u):
-                logo = e.get("logo") or au_logo(region, e["id"])
-                yield (e["id"], logo, f"au:{region}:tv")
-        except Exception:
-            pass
-        # Radio
-        try:
-            m3u = get(f"https://i.mjh.nz/au/{urllib.parse.quote(region)}/raw-radio.m3u8")
-            for e in parse_m3u_entries(m3u):
-                logo = e.get("logo") or au_logo(region, e["id"])
-                yield (e["id"], logo, f"au:{region}:radio")
-        except Exception:
-            pass
-
-    # NZ TV + NZ Radio
-    for path in ("raw-tv.m3u8", "raw-radio.m3u8"):
-        try:
-            m3u = get(f"https://i.mjh.nz/nz/{path}")
-            for e in parse_m3u_entries(m3u):
-                yield (e["id"], e.get("logo") or nz_logo(e["id"]), f"nz:{path}")
-        except Exception:
-            pass
-
-    # Optional other i.mjh.nz regions
-    for r in INTL_REGIONS:
-        try:
-            m3u = get(f"https://i.mjh.nz/{r}/raw-tv.m3u8")
-            for e in parse_m3u_entries(m3u):
-                logo = e.get("logo") or f"https://i.mjh.nz/{r}/logo/{urllib.parse.quote(e['id'])}.png"
-                yield (e["id"], logo, f"intl:{r}")
-        except Exception:
-            pass
-
-    # A1X curated (take first source that works)
-    for u in A1X_SOURCES:
-        try:
-            m3u = get(u)
-            if len(m3u) < 100:
-                continue
-            for e in parse_m3u_entries(m3u):
-                logo = e.get("logo")
-                if not logo:
-                    # Try curated by id, then by slug of id, then by slug of name
-                    logo = curated_by_id.get(e["id"]) \
-                        or curated_by_slug.get(slugify(e["id"])) \
-                        or curated_by_slug.get(slugify(e.get("name") or ""))
+                logo = e.get("logo") or curated_by_id.get(e["id"]) or curated_by_slug.get(slugify(e["id"])) or \
+                       curated_by_slug.get(slugify(e.get("name") or ""))
                 if logo:
-                    yield (e["id"], logo, "a1x")
-            break
+                    channels.append((e["id"], logo, source_prefix))
         except Exception:
-            continue
+            pass
 
-    # Your pasted extras (optional)
+    tasks = []
+    for region in REGIONS:
+        tasks.append(fetch_m3u(f"https://i.mjh.nz/au/{urllib.parse.quote(region)}/raw-tv.m3u8", f"au:{region}:tv"))
+        tasks.append(fetch_m3u(f"https://i.mjh.nz/au/{urllib.parse.quote(region)}/raw-radio.m3u8", f"au:{region}:radio"))
+    
+    for path in ("raw-tv.m3u8", "raw-radio.m3u8"):
+        tasks.append(fetch_m3u(f"https://i.mjh.nz/nz/{path}", f"nz:{path}"))
+    
+    for r in INTL_REGIONS:
+        tasks.append(fetch_m3u(f"https://i.mjh.nz/{r}/raw-tv.m3u8", f"intl:{r}"))
+    
+    for u in A1X_SOURCES:
+        tasks.append(fetch_m3u(u, "a1x"))
+    
+    for url in (EXTRAS_URLS if isinstance(EXTRAS_URLS, (list, tuple)) else [EXTRAS_URLS]):
+        if url:
+            tasks.append(fetch_m3u(url, "extras-remote"))
+    
     if os.path.exists(EXTRAS_PATH):
         try:
             with open(EXTRAS_PATH, "r", encoding="utf-8") as f:
                 ex = f.read()
             for e in parse_m3u_entries(ex):
-                logo = e.get("logo") \
-                    or curated_by_id.get(e["id"]) \
-                    or curated_by_slug.get(slugify(e["id"])) \
-                    or curated_by_slug.get(slugify(e.get("name") or ""))
+                logo = e.get("logo") or curated_by_id.get(e["id"]) or curated_by_slug.get(slugify(e["id"])) or \
+                       curated_by_slug.get(slugify(e.get("name") or ""))
                 if logo:
-                    yield (e["id"], logo, "extras")
+                    channels.append((e["id"], logo, "extras-local"))
         except Exception:
             pass
 
+    await asyncio.gather(*tasks, return_exceptions=True)
+    return channels
 
-# === Main ===
-def main():
+async def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     seen = set()
     saved = 0
-    mapping = {}  # original id -> /images/<slug>512.png
-    skipped_rows = []  # [slug, id, source, reason, logo_url]
+    mapping: Dict[str, str] = {}
+    skipped_rows = []
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
     t0 = time.time()
 
-    for cid, logo_url, source in fetch_all_channels():
-        slug = slugify(cid)
-        if not slug:
-            skipped_rows.append(["", cid, source, "empty-slug", logo_url or ""])
-            continue
-        if slug in seen:
-            # Not an error; just dedupe
-            continue
-        seen.add(slug)
+    async with aiohttp.ClientSession(headers={
+        "User-Agent": "Mozilla/5.0 (compatible; au-iptv-poster/2.7; +https://example.local)",
+        "Accept": "*/*",
+    }) as session:
+        channels = await fetch_all_channels(session, semaphore)
+        
+        async def process_channel(cid: str, logo_url: str, source: str):
+            slug = slugify(cid)
+            if not slug:
+                return ["", cid, source, "empty-slug", logo_url or ""]
+            if slug in seen:
+                return None
+            seen.add(slug)
 
-        out = os.path.join(OUT_DIR, f"{slug}512.png")
-        web_path = f"/images/{slug}512.png"
-        mapping[cid] = web_path
+            out = os.path.join(OUT_DIR, f"{slug}512.png")
+            web_path = f"/images/{slug}512.png"
+            mapping[cid] = web_path
 
-        if os.path.exists(out):
-            continue
-
-        if not logo_url:
-            skipped_rows.append([slug, cid, source, "no-logo-url", ""])
-            continue
-
-        try:
-            buf = get_bytes(logo_url)
-            pad_save_png(buf, out)
             if os.path.exists(out):
-                saved += 1
-        except requests.HTTPError as e:
-            skipped_rows.append([slug, cid, source, f"http-{e.response.status_code}", logo_url])
-        except requests.RequestException as e:
-            skipped_rows.append([slug, cid, source, f"net-error:{type(e).__name__}", logo_url])
-        except Exception as e:
-            skipped_rows.append([slug, cid, source, f"img-error:{type(e).__name__}", logo_url])
+                return None
 
-    # Save map for index.js usage (local images)
-    with open(os.path.join(OUT_DIR, "map.json"), "w", encoding="utf-8") as f:
-        json.dump(mapping, f, indent=2, ensure_ascii=False)
+            if not logo_url:
+                return [slug, cid, source, "no-logo-url", ""]
+            
+            try:
+                buf = await get_bytes(session, logo_url, semaphore)
+                with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(executor, pad_save_png, buf, out)
+                if os.path.exists(out):
+                    nonlocal saved
+                    saved += 1
+                return None
+            except aiohttp.ClientResponseError as e:
+                return [slug, cid, source, f"http-{e.status}", logo_url]
+            except aiohttp.ClientError as e:
+                return [slug, cid, source, f"net-error:{type(e).__name__}", logo_url]
+            except Exception as e:
+                return [slug, cid, source, f"img-error:{type(e).__name__}", logo_url]
 
-    # Zip them
+        tasks = [process_channel(cid, logo_url, source) for cid, logo_url, source in channels]
+        results = await tqdm.gather(*tasks, desc="Processing channels", unit="channel")
+        skipped_rows.extend([r for r in results if r is not None])
+
+    images_map_path = os.path.join(OUT_DIR, "map.json")
+    async with aiofiles.open(images_map_path, "w", encoding="utf-8") as f:
+        await f.write(json.dumps(mapping, indent=2, ensure_ascii=False))
+
+    root_map_path = os.path.join(ROOT, "map.json")
+    async with aiofiles.open(root_map_path, "w", encoding="utf-8") as f:
+        await f.write(json.dumps(mapping, indent=2, ensure_ascii=False))
+
     zip_path = os.path.join(OUT_DIR, "images-512.zip")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
         for fn in os.listdir(OUT_DIR):
             if fn.endswith("512.png"):
                 z.write(os.path.join(OUT_DIR, fn), arcname=fn)
 
-    # Skips report
     if skipped_rows:
-        with open(os.path.join(OUT_DIR, "skipped.csv"), "w", newline='', encoding="utf-8") as f:
+        async with aiofiles.open(os.path.join(OUT_DIR, "skipped.csv"), "w", newline='', encoding="utf-8") as f:
             w = csv.writer(f)
-            w.writerow(["slug","id","source","reason","logo_url"])
-            w.writerows(skipped_rows)
+            await f.write(','.join(["slug", "id", "source", "reason", "logo_url"]) + '\n')
+            for row in skipped_rows:
+                await f.write(','.join(map(str, row)) + '\n')
 
-    # Summary
     reasons = {}
-    for _,_,_,reason,_ in skipped_rows:
+    for _, _, _, reason, _ in skipped_rows:
         reasons[reason] = reasons.get(reason, 0) + 1
 
-    print(f"Done in {time.time()-t0:.1f}s. Saved {saved} images to {OUT_DIR}")
+    print(f"Done in {time.time() - t0:.1f}s. Saved {saved} images to {OUT_DIR}")
     print(f"ZIP: {zip_path}")
-    print(f"Map: {os.path.join(OUT_DIR, 'map.json')}")
+    print(f"Map (images): {images_map_path}")
+    print(f"Map (root):   {root_map_path}")
     if skipped_rows:
         print(f"Skipped: {len(skipped_rows)} (see {os.path.join(OUT_DIR, 'skipped.csv')})")
         if reasons:
-            print("Top skip reasons:", ", ".join(f"{k}={v}" for k,v in sorted(reasons.items(), key=lambda x: -x[1])[:8]))
+            print("Top skip reasons:", ", ".join(f"{k}={v}" for k, v in sorted(reasons.items(), key=lambda x: -x[1])[:8]))
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

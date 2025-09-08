@@ -1,2 +1,6 @@
 slug,id,source,reason,logo_url
+espn1-au,ESPN1.au,extras-remote,http-403,https://watch.foxtel.com.au/app/imageHelper.php?id=570991:206:CHANNEL:IMAGE:png&amp;w=400
+espn2-au,ESPN2.au,extras-remote,http-403,https://watch.foxtel.com.au/app/imageHelper.php?id=570992:206:CHANNEL:IMAGE:png&amp;w=400
+main-event-ufc-au,Main.Event.Ufc.au,extras-remote,http-403,https://watch.foxtel.com.au/app/imageHelper.php?id=16859930:206:CHANNEL:IMAGE:png&amp;w=400
+beinsport1-au,BeinSport1.au,extras-remote,http-404,https://raw.githubusercontent.com/tv-logo/tv-logos/refs/heads/main/countries/united-states/bein-sports-1-us.png
 mjh-radio-nova-919,mjh-radio-nova-919,au:Adelaide:radio,http-429,https://novafm.com.au/assets/nova/cards/generic-album-art.jpg
