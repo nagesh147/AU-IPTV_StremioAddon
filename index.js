@@ -100,7 +100,6 @@ function parseM3U(text) {
     } else if (line.startsWith('#EXTGRP:')) {
       if (cur) cur.group = line.slice(8).trim();
     } else if (cur && !line.startsWith('#')) {
-      // keep only the first URL-looking token
       const m = line.match(/https?:\/\/\S+/);
       if (m) channels.set(cur.id, { ...cur, url: m[0] });
       cur = null;
@@ -109,7 +108,6 @@ function parseM3U(text) {
   return channels;
 }
 function parseM3UEntries(text) {
-  // Robust: keeps only the first http(s) URL after each #EXTINF block
   const lines = String(text || '').split(/\r?\n/);
   const out = [];
   let meta = null;
@@ -223,7 +221,7 @@ const TRADITIONAL_CHANNELS = [
   ['ABC TV','ABC','ABC NEWS','ABC ME','ABC KIDS','ABC TV PLUS','ABC ENTERTAINS','ABC FAMILY'],
   ['SBS','NITV'],
   ['SEVEN','7TWO','7MATE','7FLIX','7BRAVO','CHANNEL 7','NETWORK 7'],
-  ['NINE','9GEM','9GO','9GO!','9LIFE','9RUSH','CHANNEL 9'],
+  ['NINE','9GEM','9GO','9GO!','9LIFE','9RUSH','CHANNEL 9','NINE'],
   ['TEN','10','10 BOLD','10 PEACH','10 SHAKE','10 COMEDY','10 DRAMA','CHANNEL 10','NETWORK 10']
 ];
 function isTraditionalChannel(name='') {
@@ -246,19 +244,88 @@ const auTradOrderValue = (name='') => {
 };
 
 /* ----------------- Poster helpers -------------------------- */
-function posterFromMapAbs(chId) {
-  const rel = POSTER_MAP?.[chId];
+// Resolve a relative/absolute map entry into an absolute URL
+function mapUrl(key) {
+  const rel = POSTER_MAP?.[key];
   if (!rel) return null;
   if (/^https?:\/\//i.test(rel)) return rel;
   const p = rel.startsWith('/images/') ? rel : `/images/${String(rel).replace(/^\/+/, '')}`;
   return `${IMAGES_BASE}${p}`;
 }
+
+// Group-level fallbacks for Extras/Curated
+function extrasGroupPoster(slug) {
+  // allow either ex-<slug> or extras-<slug> keys, else generic
+  return mapUrl(`ex-${slug}`) || mapUrl(`extras-${slug}`) || mapUrl('extras-generic');
+}
+function sportsGenericPoster() {
+  return mapUrl('sports-generic') || mapUrl('extras-generic');
+}
+
+// Smarter map matching by id, with event/generic collapses and a longest-prefix try
+function posterFromMapAbs(chId) {
+  const tryKey = (k) => mapUrl(k);
+
+  // exact id match
+  let abs = tryKey(chId);
+  if (abs) return abs;
+
+  // Extras "event-<num>-<hash>" -> "event-<hash>"
+  const mEvent = /^event-(\d+)-([a-z0-9]+)$/i.exec(chId);
+  if (mEvent) {
+    abs = tryKey(`event-${mEvent[2]}`);
+    if (abs) return abs;
+  }
+
+  // Generic "<slug>-<num>-<hash>" -> "<slug>-<hash>"
+  const mGeneric = /^([a-z0-9-]+?)-(\d+)-([a-z0-9]+)$/i.exec(chId);
+  if (mGeneric) {
+    abs = tryKey(`${mGeneric[1]}-${mGeneric[3]}`);
+    if (abs) return abs;
+  }
+
+  // Longest-prefix match against keys present in map.json (best-effort)
+  try {
+    const keys = Object.keys(POSTER_MAP || {});
+    let best = null;
+    for (const k of keys) {
+      if (chId.startsWith(k) && (!best || k.length > best.length)) best = k;
+    }
+    if (best) {
+      abs = tryKey(best);
+      if (abs) return abs;
+    }
+  } catch (_) {}
+
+  return null;
+}
 function posterAny(regionOrKey, ch) {
-  const mapped = posterFromMapAbs(ch.id);
+  // 1) mapped by id (and event/generic fallbacks)
+  let mapped = posterFromMapAbs(ch.id);
+
+  // 2) F1 fallback: map keys are "f1-<hash>", runtime ids end with "-<hash>"
+  if (!mapped && /(?:^|\b)f1\b/i.test(ch.name || '') && /-([a-z0-9]{5,9})$/i.test(ch.id)) {
+    const h = ch.id.match(/-([a-z0-9]{5,9})$/i)[1].toLowerCase();
+    mapped = posterFromMapAbs(`f1-${h}`);
+  }
+
   if (mapped) return mapped;
+
+  // 3) M3U-provided logo
   if (ch.logo && /^https?:\/\//i.test(ch.logo)) return ch.logo;
+
+  // 4) Region/pack fallbacks
   if (regionOrKey === 'NZ') return `${baseNZ()}/logo/${encodeURIComponent(ch.id)}.png`;
-  if (String(regionOrKey || '').startsWith('SP') || String(regionOrKey || '').startsWith('EX')) return '';
+
+  if (String(regionOrKey || '').startsWith('EX')) {
+    const slug = String(regionOrKey).split(':')[1] || '';
+    return extrasGroupPoster(slug) || '';
+  }
+  if (String(regionOrKey || '').startsWith('SP')) {
+    return sportsGenericPoster() || '';
+  }
+
+  // 5) AU default logo service
   return `${base(regionOrKey)}/logo/${encodeURIComponent(ch.id)}.png`;
 }
 function m3uLogoAny(regionOrKey, ch) {
@@ -425,7 +492,7 @@ async function fetchExtrasM3U(forceFresh = false) {
   }
 }
 
-// IMPORTANT FIX: group by name (slug) and merge duplicates as variants
+// IMPORTANT: group by name (slug) and merge duplicates as variants
 async function getExtrasGroups({ forceFresh = false } = {}) {
   if (!forceFresh && cache.extras_groups && fresh(cache.extras_groups, SHORT_TTL))
     return cache.extras_groups.groups;
@@ -457,7 +524,8 @@ async function getExtrasGroups({ forceFresh = false } = {}) {
     } else {
       if (!existing.variants.some(v => v.url === e.url)) {
         existing.variants.push({ label, url: e.url, rank });
-        existing.variants.sort((a,b)=>b.rank-a.rank);
+        // FIX: correct sort comparator
+        existing.variants.sort((a,b)=> b.rank - a.rank);
         existing.url = existing.variants[0].url;
       }
     }
@@ -539,7 +607,6 @@ function genreCity(selected) {
 const genreIs = (selected, ...opts) => opts.some(o => String(selected||'').toLowerCase().trim() === String(o).toLowerCase());
 
 function buildHeaders(url) {
-  // Always provide UA/Referer/Origin for curated / extras
   let origin = 'https://www.google.com';
   let referer = 'https://www.google.com/';
   try {
@@ -602,7 +669,6 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
   else if (genreIs(selectedGenre, 'nz radio')) { isNZ = true; contentKind = 'radio'; }
   else if (/^extra:\s*/i.test(selectedGenre)) { isExtras = true; extrasSlug = slugify(selectedGenre.replace(/^extra:\s*/i,'')); }
   else {
-    // curated sets
     const lower = selectedGenre.toLowerCase();
     const keyMap = {
       'uk tv':'uk_tv','uk channels':'uk_tv',
@@ -622,20 +688,16 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     }
   }
 
-  // Build genre options dynamically (NZ cities + extras)
   const genreOptions = ['Traditional Channels','Other Channels','All TV Channels','Regional Channels','Radio',
                         'NZ TV','NZ Radio',
                         'UK TV','UK Sports','US TV','US Sports','CA TV','CA Sports','AU Sports','NZ Sports','EU Sports','World Sports','EPL'];
-  // add extras groups (names only)
   try {
     const groups = await getExtrasGroups({ forceFresh: false });
     for (const [, g] of groups) genreOptions.push(`Extra: ${g.name}`);
   } catch {}
 
-  // Return updated manifest when the app requests it
   builder.manifest = buildManifestV3(region, genreOptions);
 
-  // Pull channels
   let channels;
   if (isNZ) channels = await getNZChannels(contentKind);
   else if (isCurated) channels = await getCuratedGroup(curatedKey);
@@ -716,7 +778,6 @@ function parseItemId(id) {
   const region = (regionRaw === 'NZ') ? 'NZ' : validRegion(regionRaw);
   return { region, cid, kind: kindRaw };
 }
-
 builder.defineMetaHandler(async ({ type, id }) => {
   if (type !== 'tv') return { meta: {} };
   const parsed = parseItemId(id);
@@ -724,43 +785,88 @@ builder.defineMetaHandler(async ({ type, id }) => {
   const { region, cid, kind } = parsed;
 
   let ch, channels, tz = 'Australia/Sydney';
-  if (region === 'NZ') { tz = 'Pacific/Auckland'; channels = await getNZChannels(kind); ch = channels.get(cid); }
-  else if (region === 'SP') { tz = 'UTC'; channels = await getCuratedGroup(parsed.curatedKey); ch = channels.get(cid); }
-  else if (region === 'EX') { tz = 'UTC'; const g = (await getExtrasGroups({ forceFresh: false })).get(parsed.extrasSlug); ch = g?.channels.get(cid); }
-  else { tz = REGION_TZ[region] || 'Australia/Sydney'; channels = await getChannels(region, kind); ch = channels.get(cid); }
+  if (region === 'NZ') {
+    tz = 'Pacific/Auckland';
+    channels = await getNZChannels(kind);
+    ch = channels.get(cid);
+  } else if (region === 'SP') {
+    tz = 'UTC';
+    channels = await getCuratedGroup(parsed.curatedKey);
+    ch = channels.get(cid);
+  } else if (region === 'EX') {
+    tz = 'UTC';
+    const g = (await getExtrasGroups({ forceFresh: false })).get(parsed.extrasSlug);
+    ch = g?.channels.get(cid);
+  } else {
+    tz = REGION_TZ[region] || 'Australia/Sydney';
+    channels = await getChannels(region, kind);
+    ch = channels.get(cid);
+  }
   if (!ch) return { meta: {} };
 
-  const regionKey = region === 'SP' ? `SP:${parsed.curatedKey}` : (region === 'EX' ? `EX:${parsed.extrasSlug}` : region);
+  const regionKey =
+    region === 'SP' ? `SP:${parsed.curatedKey}` :
+    region === 'EX' ? `EX:${parsed.extrasSlug}` :
+    region;
 
+  // Radio meta
   if (kind === 'radio') {
     const squarePoster = posterAny(regionKey, ch);
     const m3uPoster = (region === 'SP' || region === 'EX') ? null : m3uLogoAny(regionKey, ch);
-    return { meta: {
-      id, type:'tv', name:ch.name, poster:squarePoster, background:squarePoster, logo:m3uPoster || squarePoster,
-      posterShape:'square', description: region==='NZ'?'Live NZ radio streaming':'Live radio streaming',
-      releaseInfo: region==='NZ'?'Live NZ Radio':'Live Radio'
-    }};
+    return {
+      meta: {
+        id,
+        type: 'tv',
+        name: ch.name,
+        poster: squarePoster,
+        background: squarePoster,
+        logo: m3uPoster || squarePoster,
+        posterShape: 'square',
+        description: region === 'NZ' ? 'Live NZ radio streaming' : 'Live radio streaming',
+        releaseInfo: region === 'NZ' ? 'Live NZ Radio' : 'Live Radio'
+      }
+    };
   }
 
+  // TV meta
   const progs = (region === 'NZ')
     ? ((await getNZEPG()).get(cid) || [])
     : (region === 'SP' || region === 'EX'
         ? []
         : ((await getEPG(region)).get(cid) || []));
-  const desc = progs.slice(0, 8).map(p => `${fmtLocal(p.start, tz)} | ${p.title || ''}`).join(' • ');
+  const desc = progs
+    .slice(0, 8)
+    .map(p => `${fmtLocal(p.start, tz)} | ${p.title || ''}`)
+    .join(' • ');
   const nowp = nowProgramme(progs);
   const squarePoster = posterAny(regionKey, ch);
   const m3uPoster = (region === 'SP' || region === 'EX') ? null : m3uLogoAny(regionKey, ch);
 
-  return { meta: {
-    id, type:'tv', name:ch.name,
-    poster:squarePoster, background:squarePoster, logo:m3uPoster || squarePoster,
-    posterShape:'square',
-    description: desc || (region==='NZ'?'Live NZ television':(region==='SP'?'Curated':(region==='EX'?'Additional Pack':'Live television streaming'))),
-    releaseInfo: nowp ? `${fmtLocal(nowp.start,tz)} - ${fmtLocal(nowp.stop,tz)} | ${nowp.title}`
-                      : (region==='NZ'?'Live NZ TV':(region==='SP'?'Curated TV':(region==='EX'?'Additional Pack':'Live TV')))
-  }};
+  return {
+    meta: {
+      id,
+      type: 'tv',
+      name: ch.name,
+      poster: squarePoster,
+      background: squarePoster,
+      logo: m3uPoster || squarePoster,
+      posterShape: 'square',
+      description: desc || (region === 'NZ'
+        ? 'Live NZ television'
+        : (region === 'SP'
+          ? 'Curated'
+          : (region === 'EX' ? 'Additional Pack' : 'Live television streaming'))),
+      releaseInfo: nowp
+        ? `${fmtLocal(nowp.start, tz)} - ${fmtLocal(nowp.stop, tz)} | ${nowp.title}`
+        : (region === 'NZ'
+          ? 'Live NZ TV'
+          : (region === 'SP'
+            ? 'Curated TV'
+            : (region === 'EX' ? 'Additional Pack' : 'Live TV')))
+    }
+  };
 });
+
 
 /* ------------------------- Stream Handler ----------------- */
 function curatedRedirectUrl({ curatedKey, cid, label }) {
@@ -798,12 +904,10 @@ builder.defineStreamHandler(async ({ type, id }) => {
   let ch = null;
 
   if (region === 'SP') {
-    // Sports/EPL tokens expire fast – force refresh
     const force = /(sports|epl)/i.test(parsed.curatedKey);
     const group = await getCuratedGroup(parsed.curatedKey, { forceFresh: force });
     ch = group.get(cid);
   } else {
-    // EXTRAS: always force-fresh (SHORT_TTL)
     const g = (await getExtrasGroups({ forceFresh: true })).get(parsed.extrasSlug);
     ch = g?.channels.get(cid);
   }
@@ -912,14 +1016,8 @@ function parseFlagsFromPath(reqPath) {
 /* ----------------------- Manifest endpoints ---------------- */
 function buildGenresFromFlags(region, flags, extrasList = []) {
   const opts = ['Traditional Channels','Other Channels','All TV Channels','Regional Channels','Radio'];
-
-  // AU city shortcuts
   REGIONS.filter(r => r !== region).forEach(city => opts.push(`${city} TV`));
-
-  // standard curated/NZ
   opts.push('NZ TV','NZ Radio','UK TV','UK Sports','US TV','US Sports','CA TV','CA Sports','AU Sports','NZ Sports','EU Sports','World Sports','EPL');
-
-  // extras groups shown as "Extra: Name"
   for (const g of extrasList) opts.push(`Extra: ${g.name}`);
   return opts;
 }
@@ -930,7 +1028,6 @@ app.get(/^\/[^/]+(?:\/[^/]+)*\/manifest\.json$/, async (req, res) => {
     const { regionRaw, flags } = parseFlagsFromPath(req.path);
     const region = validRegion(regionRaw);
 
-    // extras names (for UI)
     let extrasList = [];
     if (flags.has('extras')) {
       try {
@@ -949,7 +1046,6 @@ app.get(/^\/[^/]+(?:\/[^/]+)*\/manifest\.json$/, async (req, res) => {
   }
 });
 
-// legacy simple manifests
 app.get('/:region/manifest.json', (req, res) => {
   const region = validRegion(req.params.region);
   const man = buildManifestV3(region, buildGenresFromFlags(region, new Set(), []));
@@ -958,7 +1054,6 @@ app.get('/:region/manifest.json', (req, res) => {
   res.json(man);
 });
 
-// Serve index.html (fallback if missing)
 app.get('/', (req, res) => {
   const idx = path.join(PUBLIC_DIR, 'index.html');
   if (fs.existsSync(idx)) return res.sendFile(idx);
@@ -968,7 +1063,6 @@ app.get('/', (req, res) => {
 /* ----------------------- SDK Router ----------------------- */
 const sdkRouter = getRouter(builder.getInterface());
 app.use((req, _res, next) => {
-  // Strip any path prefix before /catalog|/meta|/stream for Lambda behind base path
   const targets = ['/catalog/','/meta/','/stream/'];
   let idx = -1;
   for (const t of targets) { const i = req.url.indexOf(t); if (i >= 0) idx = (idx === -1 ? i : Math.min(idx, i)); }
@@ -980,7 +1074,7 @@ app.use('/', sdkRouter);
 /* ------------------- Export / Local run ------------------- */
 module.exports.handler = serverless(app);
 
- if (require.main === module) {
-   const PORT = process.env.PORT || 7000;
-   app.listen(PORT, () => console.log('Listening on', PORT));
- }
+if (require.main === module) {
+  const PORT = process.env.PORT || 7000;
+  app.listen(PORT, () => console.log('Listening on', PORT));
+}
