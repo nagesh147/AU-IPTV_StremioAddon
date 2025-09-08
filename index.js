@@ -40,7 +40,13 @@ const STREMIO_ADDONS_CONFIG = {
 // Posters via /images repo (optional map.json)
 const IMAGES_BASE = process.env.IMAGES_BASE || 'https://raw.githubusercontent.com/josharghhh/AU-IPTV_StremioAddon/main';
 let POSTER_MAP = {};
-try { POSTER_MAP = require('./map.json'); } catch { POSTER_MAP = {}; }
+function refreshPosterMap() {
+  try {
+    delete require.cache[require.resolve('./map.json')];
+    POSTER_MAP = require('./map.json');
+  } catch { POSTER_MAP = {}; }
+}
+refreshPosterMap();
 
 // Extras (dynamic packs) M3U
 const EXTRAS_M3U_URL = process.env.EXTRAS_M3U_URL ||
