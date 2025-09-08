@@ -17,7 +17,7 @@ import aiofiles
 from typing import Dict, Tuple, Iterable, Optional
 from concurrent.futures import ThreadPoolExecutor
 from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
-from tqdm.asyncio import tqdm
+from tqdm import tqdm  # <-- plain tqdm
 
 try:
     import cairosvg  # optional, for SVG -> PNG
@@ -61,7 +61,24 @@ MAX_WORKERS = 16  # Match CPU threads
 
 # === Helpers ===
 def slugify(s: str) -> str:
-    return re.sub(r'[^a-z0-9]+', '-', s.lower()).strip('-')
+    return re.sub(r'[^a-z0-9]+', '-', (s or "").lower()).strip('-')
+
+def _to_base36(n: int) -> str:
+    if n == 0:
+        return "0"
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    out = []
+    while n:
+        n, r = divmod(n, 36)
+        out.append(digits[r])
+    return ''.join(reversed(out))
+
+def js_hash32_base36(s: str) -> str:
+    """Match JS: ((h<<5) - h + c) | 0 ; then (h >>> 0).toString(36)"""
+    h = 0
+    for ch in s or "":
+        h = ((h << 5) - h + ord(ch)) & 0xFFFFFFFF
+    return _to_base36(h)
 
 async def get_text(session: aiohttp.ClientSession, url: str, semaphore: asyncio.Semaphore) -> str:
     async with semaphore:
@@ -99,7 +116,7 @@ async def get_bytes(session: aiohttp.ClientSession, url: str, semaphore: asyncio
 
 def _parse_attr_pairs(attr_str: str) -> dict:
     attrs = {}
-    for pair in re.split(r'\s*,\s*|\s+', attr_str.strip()):
+    for pair in re.split(r'\s*,\s*|\s+', (attr_str or '').strip()):
         if '=' in pair:
             key, val = pair.split('=', 1)
             val = val.strip('"\'')
@@ -108,9 +125,13 @@ def _parse_attr_pairs(attr_str: str) -> dict:
     return attrs
 
 def parse_m3u_entries(text: str):
-    idv = name = logo = None
-    for line in text.splitlines():
-        line = line.strip()
+    """
+    Robust M3U parser for logos + first URL after each #EXTINF block.
+    Returns dicts with: id, name, logo, group, url
+    """
+    meta = None
+    for raw in (text or '').splitlines():
+        line = (raw or '').strip()
         if not line or line.startswith('#EXTM3U'):
             continue
         if line.startswith('#EXTINF'):
@@ -125,10 +146,17 @@ def parse_m3u_entries(text: str):
             name = (attrs.get('tvg-name') or disp).strip()
             if 'http://' in name or 'https://' in name:
                 name = name.split('http://')[0].split('https://')[0].strip(' "')
-            idv = (attrs.get('tvg-id') or name or None)
-        elif not line.startswith('#') and idv:
-            yield {"id": idv, "name": name or idv, "logo": logo}
-            idv = name = logo = None
+            gid = (attrs.get('tvg-id') or name or None)
+            group = attrs.get('group-title') or None
+            meta = {"id": gid, "name": name or gid, "logo": logo, "group": group}
+        elif line.startswith('#EXTGRP:'):
+            if meta:
+                meta["group"] = line.split(':', 1)[-1].strip() or meta.get("group")
+        elif meta and not line.startswith('#'):
+            m = re.search(r'https?://\S+', line)  # keep only first URL-looking token
+            url = m.group(0) if m else ""
+            yield {"id": meta["id"], "name": meta["name"], "logo": meta["logo"], "group": meta.get("group"), "url": url}
+            meta = None
 
 def au_logo(region: str, cid: str) -> str:
     return f"https://i.mjh.nz/au/{urllib.parse.quote(region)}/logo/{urllib.parse.quote(cid)}.png"
@@ -227,12 +255,18 @@ def build_curated_indexes(pairs: Iterable[Tuple[str, str]]):
     return by_id, by_slug
 
 async def fetch_all_channels(session: aiohttp.ClientSession, semaphore: asyncio.Semaphore):
+    """
+    Returns list of tuples: (cid, name, logo_url, source_prefix)
+    For Extras sources, cid == f"{slugify(name or id)}-{js_hash32_base36(url)}"
+    so it exactly matches the IDs your addon uses (after you patch index.js).
+    """
     curated_pairs = load_curated_from_map()
     curated_by_id, curated_by_slug = build_curated_indexes(curated_pairs)
-    channels = []
+    channels: list[tuple[str, str, Optional[str], str]] = []
 
+    # seed with existing curated entries so we keep their logos
     for cid, logo in curated_pairs:
-        channels.append((cid, logo, "curated-seed"))
+        channels.append((cid, cid, logo, "curated-seed"))
 
     async def fetch_m3u(url, source_prefix):
         try:
@@ -240,10 +274,21 @@ async def fetch_all_channels(session: aiohttp.ClientSession, semaphore: asyncio.
             if len(m3u) < 100 and source_prefix == "a1x":
                 return
             for e in parse_m3u_entries(m3u):
-                logo = e.get("logo") or curated_by_id.get(e["id"]) or curated_by_slug.get(slugify(e["id"])) or \
-                       curated_by_slug.get(slugify(e.get("name") or ""))
-                if logo:
-                    channels.append((e["id"], logo, source_prefix))
+                name = e.get("name") or e.get("id") or ""
+                # choose map logo first if present
+                logo = (
+                    e.get("logo")
+                    or curated_by_id.get(e.get("id") or "")
+                    or curated_by_slug.get(slugify(e.get("id") or ""))
+                    or curated_by_slug.get(slugify(name))
+                )
+                cid = e.get("id") or name
+                if source_prefix.startswith("extras-"):
+                    # IMPORTANT: extras use stable ID = name-slug + hash32(url)
+                    url0 = e.get("url") or ""
+                    name_slug = slugify(name or cid)
+                    cid = f"{name_slug}-{js_hash32_base36(url0)}"
+                channels.append((cid, name, logo, source_prefix))
         except Exception:
             pass
 
@@ -251,34 +296,56 @@ async def fetch_all_channels(session: aiohttp.ClientSession, semaphore: asyncio.
     for region in REGIONS:
         tasks.append(fetch_m3u(f"https://i.mjh.nz/au/{urllib.parse.quote(region)}/raw-tv.m3u8", f"au:{region}:tv"))
         tasks.append(fetch_m3u(f"https://i.mjh.nz/au/{urllib.parse.quote(region)}/raw-radio.m3u8", f"au:{region}:radio"))
-    
+
     for path in ("raw-tv.m3u8", "raw-radio.m3u8"):
         tasks.append(fetch_m3u(f"https://i.mjh.nz/nz/{path}", f"nz:{path}"))
-    
+
     for r in INTL_REGIONS:
         tasks.append(fetch_m3u(f"https://i.mjh.nz/{r}/raw-tv.m3u8", f"intl:{r}"))
-    
+
     for u in A1X_SOURCES:
         tasks.append(fetch_m3u(u, "a1x"))
-    
+
     for url in (EXTRAS_URLS if isinstance(EXTRAS_URLS, (list, tuple)) else [EXTRAS_URLS]):
         if url:
             tasks.append(fetch_m3u(url, "extras-remote"))
-    
+
     if os.path.exists(EXTRAS_PATH):
         try:
             with open(EXTRAS_PATH, "r", encoding="utf-8") as f:
                 ex = f.read()
+            # tag as extras-local so we use the stable ID rule
             for e in parse_m3u_entries(ex):
-                logo = e.get("logo") or curated_by_id.get(e["id"]) or curated_by_slug.get(slugify(e["id"])) or \
-                       curated_by_slug.get(slugify(e.get("name") or ""))
-                if logo:
-                    channels.append((e["id"], logo, "extras-local"))
+                name = e.get("name") or e.get("id") or ""
+                logo = (
+                    e.get("logo")
+                    or curated_by_id.get(e.get("id") or "")
+                    or curated_by_slug.get(slugify(e.get("id") or ""))
+                    or curated_by_slug.get(slugify(name))
+                )
+                url0 = e.get("url") or ""
+                name_slug = slugify(name or (e.get("id") or ""))
+                cid = f"{name_slug}-{js_hash32_base36(url0)}"
+                channels.append((cid, name, logo, "extras-local"))
         except Exception:
             pass
 
     await asyncio.gather(*tasks, return_exceptions=True)
     return channels
+
+async def gather_with_progress(tasks, desc="Processing", unit="task"):
+    """Compat progress bar for asyncio tasks (no tqdm.asyncio dependency)."""
+    results = []
+    if not tasks:
+        return results
+    with tqdm(total=len(tasks), desc=desc, unit=unit) as pbar:
+        for fut in asyncio.as_completed(tasks):
+            try:
+                res = await fut
+            finally:
+                pbar.update(1)
+            results.append(res)
+    return results
 
 async def main():
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -295,8 +362,9 @@ async def main():
         "Accept": "*/*",
     }) as session:
         channels = await fetch_all_channels(session, semaphore)
-        
-        async def process_channel(cid: str, logo_url: str, source: str):
+
+        async def process_channel(cid: str, name: str, logo_url: Optional[str], source: str):
+            nonlocal saved
             slug = slugify(cid)
             if not slug:
                 return ["", cid, source, "empty-slug", logo_url or ""]
@@ -306,32 +374,33 @@ async def main():
 
             out = os.path.join(OUT_DIR, f"{slug}512.png")
             web_path = f"/images/{slug}512.png"
-            mapping[cid] = web_path
+            mapping[cid] = web_path  # ensure map gets the entry even if file exists
 
             if os.path.exists(out):
                 return None
 
-            if not logo_url:
-                return [slug, cid, source, "no-logo-url", ""]
-            
             try:
-                buf = await get_bytes(session, logo_url, semaphore)
+                if logo_url:
+                    buf = await get_bytes(session, logo_url, semaphore)
+                else:
+                    # generate a placeholder so Extras always get a poster
+                    buf = text_placeholder_png(name or cid)
+
                 with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                     loop = asyncio.get_event_loop()
                     await loop.run_in_executor(executor, pad_save_png, buf, out)
                 if os.path.exists(out):
-                    nonlocal saved
                     saved += 1
                 return None
             except aiohttp.ClientResponseError as e:
-                return [slug, cid, source, f"http-{e.status}", logo_url]
+                return [slug, cid, source, f"http-{e.status}", logo_url or ""]
             except aiohttp.ClientError as e:
-                return [slug, cid, source, f"net-error:{type(e).__name__}", logo_url]
+                return [slug, cid, source, f"net-error:{type(e).__name__}", logo_url or ""]
             except Exception as e:
-                return [slug, cid, source, f"img-error:{type(e).__name__}", logo_url]
+                return [slug, cid, source, f"img-error:{type(e).__name__}", logo_url or ""]
 
-        tasks = [process_channel(cid, logo_url, source) for cid, logo_url, source in channels]
-        results = await tqdm.gather(*tasks, desc="Processing channels", unit="channel")
+        tasks = [process_channel(cid, name, logo_url, source) for cid, name, logo_url, source in channels]
+        results = await gather_with_progress(tasks, desc="Processing channels", unit="channel")
         skipped_rows.extend([r for r in results if r is not None])
 
     images_map_path = os.path.join(OUT_DIR, "map.json")
@@ -350,7 +419,6 @@ async def main():
 
     if skipped_rows:
         async with aiofiles.open(os.path.join(OUT_DIR, "skipped.csv"), "w", newline='', encoding="utf-8") as f:
-            w = csv.writer(f)
             await f.write(','.join(["slug", "id", "source", "reason", "logo_url"]) + '\n')
             for row in skipped_rows:
                 await f.write(','.join(map(str, row)) + '\n')

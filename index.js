@@ -94,12 +94,16 @@ function parseM3U(text) {
     } else if (line.startsWith('#EXTGRP:')) {
       if (cur) cur.group = line.slice(8).trim();
     } else if (cur && !line.startsWith('#')) {
-      channels.set(cur.id, { ...cur, url: line }); cur = null;
+      // keep only the first URL-looking token
+      const m = line.match(/https?:\/\/\S+/);
+      if (m) channels.set(cur.id, { ...cur, url: m[0] });
+      cur = null;
     }
   }
   return channels;
 }
 function parseM3UEntries(text) {
+  // Robust: keeps only the first http(s) URL after each #EXTINF block
   const lines = String(text || '').split(/\r?\n/);
   const out = [];
   let meta = null;
@@ -115,7 +119,9 @@ function parseM3UEntries(text) {
     } else if (line.startsWith('#EXTGRP:')) {
       if (meta) meta.group = line.slice(8).trim();
     } else if (meta && !line.startsWith('#')) {
-      out.push({ ...meta, url: line }); meta = null;
+      const m = line.match(/https?:\/\/\S+/);
+      if (m) out.push({ ...meta, url: m[0] });
+      meta = null;
     }
   }
   return out;
@@ -196,10 +202,10 @@ function isOtherChannel(name = '') {
   const u = String(name).toUpperCase();
   const normalized = u.replace(/[^A-Z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
   const OTHER_CHANNELS = [
-    'ABC BUSINESS','ABC BUSINESS IN 90 SECONDS','ABC NEWS IN 90 SECONDS','ABC SPORT IN 90 SECONDS',
-    'ABC WEATHER IN 90 SECONDS','SBS ARABIC','SBS CHILL','SBS POPASIA','SBS RADIO 1','SBS RADIO 2','SBS RADIO 3',
-    'SBS SOUTH ASIAN','SBS WORLD MOVIES','SBS WORLD WATCH','SBS WORLDWATCH','SBS FOOD','SBS VICELAND',
-    '8 OUT OF 10 CATS'
+    'ABC BUSINESS','ABC BUSINESS IN 90 SECONDS','ABC NEWS IN 90 SECONDS',
+    'ABC SPORT IN 90 SECONDS','ABC WEATHER IN 90 SECONDS','SBS ARABIC','SBS CHILL','SBS POPASIA',
+    'SBS RADIO 1','SBS RADIO 2','SBS RADIO 3','SBS SOUTH ASIAN','SBS WORLD MOVIES','SBS WORLD WATCH','SBS WORLDWATCH',
+    'SBS FOOD','SBS VICELAND','8 OUT OF 10 CATS'
   ];
   if (OTHER_CHANNELS.includes(u)) return true;
   if (/\bHAVE YOU BEEN PAYING ATTENTION\b/.test(normalized)) return true;
@@ -395,6 +401,11 @@ async function getCuratedGroup(key, { forceFresh = false } = {}) {
 const slugify = (s='') =>
   String(s).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,48) || 'pack';
 
+function hash32(s='') { // stable-ish short id
+  let h = 0; for (let i=0;i<s.length;i++) { h = (h<<5) - h + s.charCodeAt(i); h |= 0; }
+  return (h>>>0).toString(36);
+}
+
 async function fetchExtrasM3U(forceFresh = false) {
   if (!forceFresh && cache.extras_text && fresh(cache.extras_text, SHORT_TTL)) return cache.extras_text.text;
   try {
@@ -407,24 +418,45 @@ async function fetchExtrasM3U(forceFresh = false) {
     return '';
   }
 }
+
+// IMPORTANT FIX: group by name (slug) and merge duplicates as variants
 async function getExtrasGroups({ forceFresh = false } = {}) {
-  if (!forceFresh && cache.extras_groups && fresh(cache.extras_groups, SHORT_TTL)) return cache.extras_groups.groups;
+  if (!forceFresh && cache.extras_groups && fresh(cache.extras_groups, SHORT_TTL))
+    return cache.extras_groups.groups;
+
   const text = await fetchExtrasM3U(forceFresh);
   const entries = parseM3UEntries(text);
 
-  const map = new Map(); // slug -> { slug, name, channels: Map }
+  const map = new Map(); // slug -> { slug, name, channels: Map(nameSlug -> channelObj) }
   for (const e of entries) {
     const gname = (e.group || 'Other').trim();
-    const slug = slugify(gname);
-    if (!map.has(slug)) map.set(slug, { slug, name: gname, channels: new Map() });
-    const id = e.id || e.name;
+    const gslug = slugify(gname);
+    if (!map.has(gslug)) map.set(gslug, { slug: gslug, name: gname, channels: new Map() });
+
+    const nameSlug = slugify(e.name) || slugify(e.id);
     const label = qualityLabel(e.name, e.url);
-    const rank = qualityRank(label);
-    map.get(slug).channels.set(id, {
-      id, name: e.name, logo: e.logo || null, url: e.url,
-      variants: [{ label, url: e.url, rank }]
-    });
+    const rank  = qualityRank(label);
+
+    const chMap = map.get(gslug).channels;
+    const existing = chMap.get(nameSlug);
+    if (!existing) {
+      const stableId = `${nameSlug}-${hash32(e.url)}`;
+      chMap.set(nameSlug, {
+        id: stableId,
+        name: e.name,
+        logo: e.logo || null,
+        url: e.url,
+        variants: [{ label, url: e.url, rank }]
+      });
+    } else {
+      if (!existing.variants.some(v => v.url === e.url)) {
+        existing.variants.push({ label, url: e.url, rank });
+        existing.variants.sort((a,b)=>b.rank-a.rank);
+        existing.url = existing.variants[0].url;
+      }
+    }
   }
+
   cache.extras_groups = { ts: Date.now(), groups: map };
   return map;
 }
@@ -588,13 +620,13 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
   const genreOptions = ['Traditional Channels','Other Channels','All TV Channels','Regional Channels','Radio',
                         'NZ TV','NZ Radio',
                         'UK TV','UK Sports','US TV','US Sports','CA TV','CA Sports','AU Sports','NZ Sports','EU Sports','World Sports','EPL'];
-  // add extras groups (names only) — do not hit network unless UI turned extras on; still fine here:
+  // add extras groups (names only)
   try {
     const groups = await getExtrasGroups({ forceFresh: false });
     for (const [, g] of groups) genreOptions.push(`Extra: ${g.name}`);
   } catch {}
 
-  // Return updated manifest when the app requests it via the SDK (Stremio ignores dynamic update, but safe)
+  // Return updated manifest when the app requests it
   builder.manifest = buildManifestV3(region, genreOptions);
 
   // Pull channels
@@ -619,7 +651,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
       if (!isNZ && !isCurated && !isExtras) {
         const traditional = isTraditionalChannel(ch.name);
         const other = isOtherChannel(ch.name);
-        const regional = false; // AU regional hidden by naming heuristics if needed
+        const regional = false;
         if (catalogType === 'traditional') { include = traditional && !regional && !other; if (include) sortVal = auTradOrderValue(ch.name); }
         else if (catalogType === 'other') { include = (other || (!traditional && !regional)) && !regional; }
         else if (catalogType === 'regional') { include = regional; }
@@ -660,7 +692,6 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     }
   }
 
-  // sorting
   if (!isCurated && !isExtras && catalogType === 'traditional')
     metas.sort((a,b)=>(a._sortOrder-b._sortOrder)||a.name.localeCompare(b.name));
   else metas.sort((a,b)=>a.name.localeCompare(b.name));
@@ -758,7 +789,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
   }
 
   // Curated or Extras
-  let ch = null; let variants = null;
+  let ch = null;
 
   if (region === 'SP') {
     // Sports/EPL tokens expire fast – force refresh
@@ -772,7 +803,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
   }
   if (!ch) return { streams: [] };
 
-  variants = Array.isArray(ch.variants) && ch.variants.length ? ch.variants : [{ label:'Play', url: ch.url }];
+  const variants = Array.isArray(ch.variants) && ch.variants.length ? ch.variants : [{ label:'Play', url: ch.url }];
 
   const streams = [];
   const seen = new Set();
@@ -943,7 +974,7 @@ app.use('/', sdkRouter);
 /* ------------------- Export / Local run ------------------- */
 module.exports.handler = serverless(app);
 
-//if (require.main === module) {
-//  const PORT = process.env.PORT || 7000;
-//  app.listen(PORT, () => console.log('Listening on', PORT));
-//}
+ if (require.main === module) {
+   const PORT = process.env.PORT || 7000;
+   app.listen(PORT, () => console.log('Listening on', PORT));
+ }
