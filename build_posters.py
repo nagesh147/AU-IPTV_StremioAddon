@@ -45,7 +45,7 @@ INPUT_MAP_CANDIDATES = [
 ]
 
 # Speed knobs
-HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "25"))
+HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "60"))  # Increased timeout
 MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONC", "64"))
 MAX_WORKERS = max(4, (os.cpu_count() or 8) * 2)
 
@@ -57,7 +57,7 @@ HOST_RATELIMITS = {
 }
 # Custom Referer/Origin where needed
 HOST_REFERER = {
-    "watch.foxtel.com.au": "https://watch.foxtel.com.au/",
+    "watch.foxtel.com.au": "https://watch.foxtel.com.au/app/",
     "imageresizer.static9.net.au": "https://www.9now.com.au/",
 }
 
@@ -66,7 +66,10 @@ _HOST_NEXT: Dict[str, float] = defaultdict(float)
 
 def _sanitize_logo_url(u: str) -> str:
     # de-html &amp; and space -> %20
-    return (u or "").replace("&amp;", "&").replace(" ", "%20").strip()
+    u = (u or "").replace("&amp;", "&").replace(" ", "%20").strip()
+    # Remove /refs/heads/ for GitHub raw URLs
+    u = u.replace("/refs/heads/", "/")
+    return u
 
 async def _wait_host_gate(host: str):
     delay = HOST_RATELIMITS.get(host)
@@ -143,7 +146,9 @@ async def get_bytes(session: aiohttp.ClientSession, url: str, semaphore: asyncio
         await _wait_host_gate(host)
 
         # headers
-        headers = {}
+        headers = {
+            "Accept-Language": "en-AU,en;q=0.9,en-GB;q=0.8,en-US;q=0.7"
+        }
         referer = HOST_REFERER.get(host)
         if referer:
             headers["Referer"] = referer
@@ -172,6 +177,7 @@ async def get_bytes(session: aiohttp.ClientSession, url: str, semaphore: asyncio
                                 headers = {
                                     "Referer": f"{u.scheme}://{u.netloc}/",
                                     "Origin":  f"{u.scheme}://{u.netloc}",
+                                    "Accept-Language": "en-AU,en;q=0.9,en-GB;q=0.8,en-US;q=0.7"
                                 }
                         continue
                     r.raise_for_status()
@@ -184,9 +190,18 @@ async def get_bytes(session: aiohttp.ClientSession, url: str, semaphore: asyncio
                             return text_placeholder_png(os.path.splitext(os.path.basename(url))[0])
                     return content
             except aiohttp.ClientResponseError as e:
-                if attempt < 2 and e.status in (429, 403, 400):
+                if e.status in (429, 403, 400, 404) and attempt < 2:
                     await asyncio.sleep(0.8 + attempt * 0.8)
                     await _wait_host_gate(host)
+                    if e.status == 404 and '-1-' in url:
+                        url = url.replace('-1-', '-')
+                        u = urllib.parse.urlparse(url)
+                        host = u.netloc.lower()
+                    continue
+                raise
+            except aiohttp.ClientConnectorError as e:
+                if attempt < 2:
+                    await asyncio.sleep(1.0 + attempt * 1.0)
                     continue
                 raise
 
