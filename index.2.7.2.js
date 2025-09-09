@@ -121,11 +121,6 @@ function rebuildPosterAliases() {
     'bein.sports1': 'beIN Sports 1',
     'bein.sports.2': 'beIN Sports 2',
     'bein.sports2': 'beIN Sports 2',
-    'fox.more+': 'FoxSportsMore.au',
-    'fox.sports.503': 'FoxSports503.au',
-    'fox.sports.505': 'FoxSports505.au',
-    'fox.sports.506': 'FoxSports506.au',
-
   };
   for (const [alias, key] of Object.entries(MANUAL)) {
     if (POSTER_MAP[key]) add(alias, key);
@@ -323,7 +318,6 @@ function nowProgramme(list) {
     const e = parseTime(p.stop ).getTime();
     if (!Number.isNaN(s) && !Number.isNaN(e) && s <= now && now < e) return p;
   }
-  0
   return null;
 }
 
@@ -995,6 +989,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
   } catch {}
 
   const list = epg.get(cid) || [];
+  the_now: { /* no-op */ }
   const nowp = nowProgramme(list);
 
   const desc =
@@ -1211,7 +1206,7 @@ app.get('/:region/manifest.json', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  const idx = path.join(__dirname, 'public', 'index.html');
+  const idx = path.join(PUBLIC_DIR, 'index.html');
   if (fs.existsSync(idx)) return res.sendFile(idx);
   res.type('text/plain').send('UI not packaged. Place your index.html in /public.');
 });
