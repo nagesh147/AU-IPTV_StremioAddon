@@ -1,5 +1,5 @@
 /**
- * AU IPTV — v2.7.0
+ * AU IPTV — v2.7.1
  * - AU/NZ live channels (i.mjh.nz)
  * - Curated packs (A1X) + multi-quality variants
  * - Dynamic "Additional Packs" from external M3U (tokened/short-lived)
@@ -38,15 +38,55 @@ const STREMIO_ADDONS_CONFIG = {
 };
 
 // Posters via /images repo (optional map.json)
-const IMAGES_BASE = process.env.IMAGES_BASE || 'https://raw.githubusercontent.com/josharghhh/AU-IPTV_StremioAddon/main';
+const IMAGES_BASE = process.env.IMAGES_BASE
+  || 'https://raw.githubusercontent.com/josharghhh/AU-IPTV_StremioAddon/main';
+
+// NOTE: the map.json lives under /images/ in your repo
+const POSTER_MAP_PATH = process.env.POSTER_MAP_PATH || path.join(__dirname, 'map.json');
+const POSTER_MAP_URL  = process.env.POSTER_MAP_URL  || `${IMAGES_BASE}/images/map.json`;
+
 let POSTER_MAP = {};
-function refreshPosterMap() {
+
+async function refreshPosterMap() {
   try {
-    delete require.cache[require.resolve('./map.json')];
-    POSTER_MAP = require('./map.json');
-  } catch { POSTER_MAP = {}; }
+    // 1) Prefer local file when present (local dev / bundled deploy)
+    if (fs.existsSync(POSTER_MAP_PATH)) {
+      const raw = fs.readFileSync(POSTER_MAP_PATH, 'utf8');
+      POSTER_MAP = JSON.parse(raw);
+      console.log(`[posters] loaded ${Object.keys(POSTER_MAP).length} keys from local map.json`);
+      return;
+    }
+
+    // 2) Remote fallbacks: try /images/map.json first, then root /map.json (just in case)
+    const candidates = [
+      POSTER_MAP_URL,                                  // .../images/map.json
+      `${IMAGES_BASE}/map.json`,                       // .../map.json (fallback)
+    ];
+
+    for (const url of candidates) {
+      try {
+        const r = await fetch(url, { cache: 'no-store' });
+        if (!r.ok) continue;
+        const json = await r.json();
+        if (json && typeof json === 'object' && Object.keys(json).length) {
+          POSTER_MAP = json;
+          console.log(`[posters] loaded ${Object.keys(POSTER_MAP).length} keys from ${url}`);
+          return;
+        }
+      } catch {}
+    }
+
+    // If nothing worked, leave the map empty (addon will fall back to generic)
+    throw new Error('no usable map.json found');
+  } catch (e) {
+    console.warn('[posters] failed to load map.json:', e.message);
+    POSTER_MAP = {};
+  }
 }
+// call once on boot
 refreshPosterMap();
+
+
 
 // Extras (dynamic packs) M3U
 const EXTRAS_M3U_URL = process.env.EXTRAS_M3U_URL ||
@@ -159,11 +199,14 @@ function parseEPG(xml) {
       const progs = res?.tv?.programme || [];
       for (const p of progs) {
         const cid = p.$?.channel || '';
-        const start = p.$?.start || '';
-        const stop  = p.$?.stop  || '';
-        const title = (Array.isArray(p.title) ? p.title[0] : p.title) || '';
-        if (!map.has(cid)) map.set(cid, []);
-        map.get(cid).push({ start, stop, title });
+        the:
+        {
+          const start = p.$?.start || '';
+          const stop  = p.$?.stop  || '';
+          const title = (Array.isArray(p.title) ? p.title[0] : p.title) || '';
+          if (!map.has(cid)) map.set(cid, []);
+          map.get(cid).push({ start, stop, title });
+        }
       }
       resolve(map);
     });
@@ -190,7 +233,7 @@ const fmtLocal = (s, tz) => {
     const ap = d.getHours() >= 12 ? 'pm' : 'am';
     return `${hh12}:${mm2}${ap}`;
   }
-}
+};
 function nowProgramme(list) {
   const now = Date.now();
   for (const p of list || []) {
@@ -244,6 +287,12 @@ const auTradOrderValue = (name='') => {
 };
 
 /* ----------------- Poster helpers -------------------------- */
+
+// simple slug (can't rely on later slugify const)
+function _slug(s='') {
+  return String(s).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+}
+
 // Resolve a relative/absolute map entry into an absolute URL
 function mapUrl(key) {
   const rel = POSTER_MAP?.[key];
@@ -253,86 +302,104 @@ function mapUrl(key) {
   return `${IMAGES_BASE}${p}`;
 }
 
-// Group-level fallbacks for Extras/Curated
-function extrasGroupPoster(slug) {
-  // allow either ex-<slug> or extras-<slug> keys, else generic
-  return mapUrl(`ex-${slug}`) || mapUrl(`extras-${slug}`) || mapUrl('extras-generic');
-}
-function sportsGenericPoster() {
-  return mapUrl('sports-generic') || mapUrl('extras-generic');
-}
-
-// Smarter map matching by id, with event/generic collapses and a longest-prefix try
-function posterFromMapAbs(chId) {
-  const tryKey = (k) => mapUrl(k);
+// exact / hash-collapsed lookups only
+function posterFromMapExact(k) {
+  const tryKey = (x) => mapUrl(x);
 
   // exact id match
-  let abs = tryKey(chId);
+  let abs = tryKey(k);
   if (abs) return abs;
 
   // Extras "event-<num>-<hash>" -> "event-<hash>"
-  const mEvent = /^event-(\d+)-([a-z0-9]+)$/i.exec(chId);
+  const mEvent = /^event-(\d+)-([a-z0-9]+)$/i.exec(k);
   if (mEvent) {
     abs = tryKey(`event-${mEvent[2]}`);
     if (abs) return abs;
   }
 
   // Generic "<slug>-<num>-<hash>" -> "<slug>-<hash>"
-  const mGeneric = /^([a-z0-9-]+?)-(\d+)-([a-z0-9]+)$/i.exec(chId);
+  const mGeneric = /^([a-z0-9-]+?)-(\d+)-([a-z0-9]+)$/i.exec(k);
   if (mGeneric) {
     abs = tryKey(`${mGeneric[1]}-${mGeneric[3]}`);
     if (abs) return abs;
   }
 
-  // Longest-prefix match against keys present in map.json (best-effort)
-  try {
-    const keys = Object.keys(POSTER_MAP || {});
-    let best = null;
-    for (const k of keys) {
-      if (chId.startsWith(k) && (!best || k.length > best.length)) best = k;
-    }
-    if (best) {
-      abs = tryKey(best);
-      if (abs) return abs;
-    }
-  } catch (_) {}
+  // FIX: brand collapse "<brand>-<anything>-<hash>" -> "<brand>-<hash>"
+  // Normalizes common sports/pack brands to their canonical keys in map.json
+  const mBrand = /^(epl|dirtvision|dazn|tnt(?:-sports)?|sky(?:-sports?)?|fox|espn|bein(?:-sports)?|main(?:-event)?|stan(?:-sport)?|ppv)-[a-z0-9-]+-([a-z0-9]+)$/i.exec(k);
+  if (mBrand) {
+    const brand = mBrand[1]
+      .toLowerCase()
+      .replace(/^tnt(?:-sports)?$/, 'tnt')
+      .replace(/^sky(?:-sports?)?$/, 'sky')
+      .replace(/^bein(?:-sports)?$/, 'bein-sports')
+      .replace(/^main(?:-event)?$/, 'main-event')
+      .replace(/^stan(?:-sport)?$/, 'stan');
+    abs = tryKey(`${brand}-${mBrand[2].toLowerCase()}`);
+    if (abs) return abs;
+  }
 
   return null;
 }
-function posterAny(regionOrKey, ch) {
-  // 1) mapped by id (and event/generic fallbacks)
-  let mapped = posterFromMapAbs(ch.id);
 
-  // 2) F1 fallback: map keys are "f1-<hash>", runtime ids end with "-<hash>"
+// broad longest-prefix (use as a last resort only)
+function posterFromMapPrefix(k) {
+  try {
+    const keys = Object.keys(POSTER_MAP || {});
+    let best = null;
+    for (const key of keys) {
+      if (k.startsWith(key) && (!best || key.length > best.length)) best = key;
+    }
+    return best ? mapUrl(best) : null;
+  } catch {
+    return null;
+  }
+}
+
+function extrasGroupPoster(slug) {
+  return mapUrl(`ex-${slug}`) || mapUrl(`extras-${slug}`) || mapUrl('extras-generic');
+}
+function sportsGenericPoster() {
+  return mapUrl('sports-generic') || mapUrl('extras-generic');
+}
+
+/**
+ * ALWAYS use your /images repo. Never use M3U or i.mjh.nz logos.
+ */
+function posterAny(regionOrKey, ch) {
+  // 1) exact / hash-collapsed map override by id
+  let mapped = posterFromMapExact(ch.id);
+
+  // F1 special hash mapping
   if (!mapped && /(?:^|\b)f1\b/i.test(ch.name || '') && /-([a-z0-9]{5,9})$/i.test(ch.id)) {
     const h = ch.id.match(/-([a-z0-9]{5,9})$/i)[1].toLowerCase();
-    mapped = posterFromMapAbs(`f1-${h}`);
+    mapped = posterFromMapExact(`f1-${h}`) || posterFromMapPrefix(`f1-${h}`);
   }
 
-  if (mapped) return mapped;
-
-  // 3) M3U-provided logo
-  if (ch.logo && /^https?:\/\//i.test(ch.logo)) return ch.logo;
-
-  // 4) Region/pack fallbacks
-  if (regionOrKey === 'NZ') return `${baseNZ()}/logo/${encodeURIComponent(ch.id)}.png`;
-
-  if (String(regionOrKey || '').startsWith('EX')) {
-    const slug = String(regionOrKey).split(':')[1] || '';
-    return extrasGroupPoster(slug) || '';
-  }
-  if (String(regionOrKey || '').startsWith('SP')) {
-    return sportsGenericPoster() || '';
+  // 2) match by stable channel-name slug
+  if (!mapped) {
+    const nameKey = _slug(ch.name).replace(/-\d+$/,'');
+    mapped = posterFromMapExact(nameKey) || posterFromMapPrefix(nameKey);
   }
 
-  // 5) AU default logo service
-  return `${base(regionOrKey)}/logo/${encodeURIComponent(ch.id)}.png`;
+  // 3) pack/region fallbacks (still from your repo)
+  if (!mapped) {
+    if (String(regionOrKey || '').startsWith('EX')) {
+      const slug = String(regionOrKey).split(':')[1] || '';
+      mapped = extrasGroupPoster(slug) || mapUrl('extras-generic');
+    } else if (String(regionOrKey || '').startsWith('SP')) {
+      mapped = sportsGenericPoster() || mapUrl('extras-generic');
+    } else {
+      // default generic so we never hit external services
+      mapped = mapUrl('extras-generic');
+    }
+  }
+  return mapped || '';
 }
-function m3uLogoAny(regionOrKey, ch) {
-  if (ch.logo && /^https?:\/\//i.test(ch.logo)) return ch.logo;
-  if (regionOrKey === 'NZ') return `${baseNZ()}/logo/${encodeURIComponent(ch.id)}.png`;
-  if (String(regionOrKey || '').startsWith('SP') || String(regionOrKey || '').startsWith('EX')) return '';
-  return `${base(regionOrKey)}/logo/${encodeURIComponent(ch.id)}.png`;
+
+// Intentionally disabled — we always use posters from /images
+function m3uLogoAny(_regionOrKey, _ch) {
+  return '';
 }
 
 /* --------------------- AU/NZ sources ----------------------- */
@@ -524,7 +591,6 @@ async function getExtrasGroups({ forceFresh = false } = {}) {
     } else {
       if (!existing.variants.some(v => v.url === e.url)) {
         existing.variants.push({ label, url: e.url, rank });
-        // FIX: correct sort comparator
         existing.variants.sort((a,b)=> b.rank - a.rank);
         existing.url = existing.variants[0].url;
       }
@@ -627,7 +693,7 @@ function buildHeaders(url) {
 function buildManifestV3(selectedRegion, genreOptions) {
   return {
     id: 'com.joshargh.auiptv',
-    version: '2.7.0',
+    version: '2.7.1',
     name: `AU IPTV (${selectedRegion})`,
     description: 'Australian + NZ live streams with optional international TV, Sports and Additional Packs.',
     types: ['tv'],
@@ -778,29 +844,30 @@ function parseItemId(id) {
   const region = (regionRaw === 'NZ') ? 'NZ' : validRegion(regionRaw);
   return { region, cid, kind: kindRaw };
 }
+
 builder.defineMetaHandler(async ({ type, id }) => {
   if (type !== 'tv') return { meta: {} };
+
   const parsed = parseItemId(id);
   if (!parsed) return { meta: {} };
+
   const { region, cid, kind } = parsed;
 
-  let ch, channels, tz = 'Australia/Sydney';
+  // Load channel
+  let ch, tz = 'Australia/Sydney';
   if (region === 'NZ') {
     tz = 'Pacific/Auckland';
-    channels = await getNZChannels(kind);
-    ch = channels.get(cid);
+    ch = (await getNZChannels(kind)).get(cid);
   } else if (region === 'SP') {
     tz = 'UTC';
-    channels = await getCuratedGroup(parsed.curatedKey);
-    ch = channels.get(cid);
+    ch = (await getCuratedGroup(parsed.curatedKey)).get(cid);
   } else if (region === 'EX') {
     tz = 'UTC';
     const g = (await getExtrasGroups({ forceFresh: false })).get(parsed.extrasSlug);
     ch = g?.channels.get(cid);
   } else {
     tz = REGION_TZ[region] || 'Australia/Sydney';
-    channels = await getChannels(region, kind);
-    ch = channels.get(cid);
+    ch = (await getChannels(region, kind)).get(cid);
   }
   if (!ch) return { meta: {} };
 
@@ -809,10 +876,9 @@ builder.defineMetaHandler(async ({ type, id }) => {
     region === 'EX' ? `EX:${parsed.extrasSlug}` :
     region;
 
-  // Radio meta
+  const squarePoster = posterAny(regionKey, ch);
+
   if (kind === 'radio') {
-    const squarePoster = posterAny(regionKey, ch);
-    const m3uPoster = (region === 'SP' || region === 'EX') ? null : m3uLogoAny(regionKey, ch);
     return {
       meta: {
         id,
@@ -820,7 +886,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
         name: ch.name,
         poster: squarePoster,
         background: squarePoster,
-        logo: m3uPoster || squarePoster,
+        logo: squarePoster,
         posterShape: 'square',
         description: region === 'NZ' ? 'Live NZ radio streaming' : 'Live radio streaming',
         releaseInfo: region === 'NZ' ? 'Live NZ Radio' : 'Live Radio'
@@ -828,19 +894,31 @@ builder.defineMetaHandler(async ({ type, id }) => {
     };
   }
 
-  // TV meta
-  const progs = (region === 'NZ')
-    ? ((await getNZEPG()).get(cid) || [])
-    : (region === 'SP' || region === 'EX'
-        ? []
-        : ((await getEPG(region)).get(cid) || []));
-  const desc = progs
-    .slice(0, 8)
-    .map(p => `${fmtLocal(p.start, tz)} | ${p.title || ''}`)
-    .join(' • ');
-  const nowp = nowProgramme(progs);
-  const squarePoster = posterAny(regionKey, ch);
-  const m3uPoster = (region === 'SP' || region === 'EX') ? null : m3uLogoAny(regionKey, ch);
+  // TV meta – enrich with EPG only for AU/NZ (we don't control curated/extras EPG)
+  let epg = new Map();
+  try {
+    if (region === 'NZ') epg = await getNZEPG();
+    else if (region !== 'SP' && region !== 'EX') epg = await getEPG(region);
+  } catch {}
+
+  const list = epg.get(cid) || [];
+  the_now:
+  {
+    // (no-op label, just mirroring original style)
+  }
+  const nowp = nowProgramme(list);
+
+  const desc =
+    region === 'NZ' ? 'Live NZ television' :
+    region === 'SP' ? 'Curated' :
+    region === 'EX' ? 'Additional Pack' :
+    'Live television streaming';
+
+  const releaseInfo = nowp
+    ? `${fmtLocal(nowp.start, tz)} - ${fmtLocal(nowp.stop, tz)} | ${nowp.title}`
+    : (region === 'NZ' ? 'Live NZ TV'
+       : (region === 'SP' ? 'Curated TV'
+       : (region === 'EX' ? 'Additional Pack' : 'Live TV')));
 
   return {
     meta: {
@@ -849,24 +927,13 @@ builder.defineMetaHandler(async ({ type, id }) => {
       name: ch.name,
       poster: squarePoster,
       background: squarePoster,
-      logo: m3uPoster || squarePoster,
+      logo: squarePoster,
       posterShape: 'square',
-      description: desc || (region === 'NZ'
-        ? 'Live NZ television'
-        : (region === 'SP'
-          ? 'Curated'
-          : (region === 'EX' ? 'Additional Pack' : 'Live television streaming'))),
-      releaseInfo: nowp
-        ? `${fmtLocal(nowp.start, tz)} - ${fmtLocal(nowp.stop, tz)} | ${nowp.title}`
-        : (region === 'NZ'
-          ? 'Live NZ TV'
-          : (region === 'SP'
-            ? 'Curated TV'
-            : (region === 'EX' ? 'Additional Pack' : 'Live TV')))
+      description: desc,
+      releaseInfo
     }
   };
 });
-
 
 /* ------------------------- Stream Handler ----------------- */
 function curatedRedirectUrl({ curatedKey, cid, label }) {

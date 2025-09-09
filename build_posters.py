@@ -18,8 +18,8 @@ except Exception:
 # ==================== CONFIG ====================
 ROOT = os.path.dirname(__file__)
 OUT_DIR = os.path.join(ROOT, "images")
-SIZE = 512
-PAD = 12
+SIZE = 1024
+PAD = 32
 BG_DARK = (24, 24, 24, 255)
 BG_LIGHT = (240, 240, 240, 255)
 
@@ -428,8 +428,8 @@ async def main():
             slug = slugify_path(cid)
             if not slug:
                 return ["", cid, source, "empty-slug", logo_url or ""]
-            out = os.path.join(OUT_DIR, f"{slug}512.png")
-            web_path = f"/images/{slug}512.png"
+            out = os.path.join(OUT_DIR, f"{slug}1024.png")
+            web_path = f"/images/{slug}1024.png"
 
             # map key MUST be exact channel id used in index.js
             mapping[cid] = web_path
@@ -471,10 +471,10 @@ async def main():
         await f.write(json.dumps(mapping, indent=2, ensure_ascii=False))
 
     # Zip bundle
-    zip_path = os.path.join(OUT_DIR, "images-512.zip")
+    zip_path = os.path.join(OUT_DIR, "images-1024.zip")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
         for fn in os.listdir(OUT_DIR):
-            if fn.endswith("512.png"):
+            if fn.endswith("1024.png"):
                 z.write(os.path.join(OUT_DIR, fn), arcname=fn)
 
     # Skips CSV
