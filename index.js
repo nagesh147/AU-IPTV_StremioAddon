@@ -1219,7 +1219,7 @@ function buildHeaders(url) {
 function buildManifestV3(selectedRegion, genreOptions) {
   return {
     id: 'com.joshargh.auiptv',
-    version: '2.7.6',
+    version: '2.8.0',
     name: `AU IPTV (${selectedRegion})`,
     description: 'Australian + NZ live streams with optional international TV, Sports and Additional Packs.',
     types: ['tv'],
