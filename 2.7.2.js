@@ -1,35 +1,17 @@
 /**
- * AU IPTV — v2.8.0 (EPG fix - Trim + Focused Load)
+ * AU IPTV — v2.7.2
  * - AU/NZ live channels (i.mjh.nz)
  * - Curated packs (A1X) + multi-quality variants
- * - Dynamic "Additional Packs" from external M3U (Rogue VIP works as before)
- * - Rogue/A1x XMLTV EPG (US/UK/Sports focus, trimmed XML) applied to curated/extras where IDs match
+ * - Dynamic "Additional Packs" from external M3U (tokened/short-lived)
  * - Stremio addon + simple landing served from /public/index.html
  */
 
 'use strict';
 
-// ---- logging control ----
-const LOG_LEVEL = (process.env.LOG_LEVEL || 'info').toLowerCase(); // debug|info|warn|error|silent
-const LOG_MUTE  = (process.env.LOG_MUTE  || '').toLowerCase().split(',').map(s=>s.trim()).filter(Boolean);
-
-const _orig = { log: console.log, warn: console.warn, error: console.error };
-
-console.log = (...a) => {
-  const first = (a[0] ?? '').toString().toLowerCase();
-  if (LOG_MUTE.some(t => t && first.includes(t))) return;              // mute by tag
-  if (!['debug','info'].includes(LOG_LEVEL)) return;                   // hide info/debug
-  _orig.log(...a);
-};
-console.warn  = (...a) => { if (['debug','info','warn'].includes(LOG_LEVEL)) _orig.warn(...a); };
-console.error = (...a) => { if (LOG_LEVEL !== 'silent') _orig.error(...a); };
-
-
 const express = require('express');
 const serverless = require('serverless-http');
 const { addonBuilder, getRouter } = require('stremio-addon-sdk');
 const xml2js = require('xml2js');
-const zlib = require('zlib');
 const path = require('path');
 const fs = require('fs');
 
@@ -39,18 +21,6 @@ const fetch = globalThis.fetch
   : ((...a) => import('node-fetch').then(({ default: f }) => f(...a)));
 
 const app = express();
-
-// ---- shared fetch helpers ----
-const DEFAULT_FETCH_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36 AUIPTV-Addon',
-  'Accept': '*/*'
-};
-
-function fetchWithTimeout(url, opts = {}, ms = 10000) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), ms);
-  return fetch(url, { ...opts, signal: ctrl.signal }).finally(() => clearTimeout(t));
-}
 
 /* ------------------------- CONFIG ------------------------- */
 const DEFAULT_REGION = 'Brisbane';
@@ -78,163 +48,6 @@ const POSTER_MAP_URL  = process.env.POSTER_MAP_URL  || `${IMAGES_BASE}/images/ma
 let POSTER_MAP = {};
 // alias table derived from POSTER_MAP
 let POSTER_ALIASES = {};
-
-/* ------------------------- EPG CONFIG (Rogue US/UK/Sports) ------------------------- */
-// Canonical XMLTV endpoints we’ll merge depending on toggles/selections.
-// (Kayo & Foxtel contain the Fox Sports / beIN / Main Event schedules that A1X/Rogue need)
-const EPG_SOURCES = {
-  AU_REGION: (region) => `https://i.mjh.nz/au/${encodeURIComponent(region)}/epg.xml`,
-  NZ:        `https://i.mjh.nz/nz/epg.xml`,
-  KAYO:      `https://i.mjh.nz/Kayo/epg.xml`,
-  FOXTEL:    'https://epgshare01.online/epgshare01/epg_ripper_US1.xml.gz'
-};
-
-// Rogue XMLTV shards (gzipped) - Focused on US, UK, Sports for efficiency, updated URLs without OPTUS
-const ROGUE_EPG_URLS = {
-  AU: [
-    'https://epgshare01.online/epgshare01/epg_ripper_AU1.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_DUMMY_CHANNELS.xml.gz',
-    `https://i.mjh.nz/Kayo/epg.xml`
-  ],
-  NZ: [
-    `https://i.mjh.nz/nz/epg.xml`,
-    'https://epgshare01.online/epgshare01/epg_ripper_NZ1.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_DUMMY_CHANNELS.xml.gz'
-  ],
-  UK: [
-    'https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_DUMMY_CHANNELS.xml.gz'
-  ],
-  US: [
-    'https://epgshare01.online/epgshare01/epg_ripper_US1.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_US1.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_US_LOCALS2.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_US_SPORTS1.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_DUMMY_CHANNELS.xml.gz'
-  ],
-  SPORTS: [
-    'https://epgshare01.online/epgshare01/epg_ripper_BEIN1.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_US_SPORTS1.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_DIRECTVSPORTS1.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_DRAFTKINGS1.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_FANDUEL1.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_PAC-12.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_POWERNATION1.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_RALLY_TV1.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_SPORTKLUB1.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_SSPORTPLUS1.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_THESPORTPLUS1.xml.gz',
-    'https://epgshare01.online/epgshare01/epg_ripper_DUMMY_CHANNELS.xml.gz',
-    `https://i.mjh.nz/Kayo/epg.xml`
-  ]
-};
-const ROGUE_EPG_TTL_MS = 20 * 60 * 1000; // 20 minutes
-
-// Light in-memory cache to avoid re-merging huge XMLTV blobs on every hit
-const EPG_CACHE_TTL_MS = 20 * 60 * 1000; // 20 minutes
-const EPG_CACHE = new Map(); // key => { xml, ts }
-
-/**
- * EPG alias map: normalize curated slugs / cids from A1X + Rogue
- * to the XMLTV ids used by i.mjh.nz feeds (Kayo / Foxtel / AU region).
- * Keys are matched case-insensitively (we lowercase on lookup).
- */
-const EPG_ALIASES = {
-  // Fox Sports / Kayo (most common A1X channels)
-  'foxcricket.au':        'FoxCricket.au',
-  'foxcricket':           'FoxCricket.au',
-  'fox.cricket':          'FoxCricket.au',
-  'foxleague.au':         'FoxLeague.au',
-  'foxleague':            'FoxLeague.au',
-  'fox.league':           'FoxLeague.au',
-  'foxfooty.au':          'FoxFooty.au',
-  'foxfooty':             'FoxFooty.au',
-  'fox.footy':            'FoxFooty.au',
-  'foxsportsmore.au':     'FoxSportsMore.au',
-  'foxsportsmore':        'FoxSportsMore.au',
-  'foxmore':              'FoxSportsMore.au',
-  'fox.sports.more':      'FoxSportsMore.au',
-  'foxsports503.au':      'FoxSports503.au',
-  'foxsports503':         'FoxSports503.au',
-  'fox503':               'FoxSports503.au',
-  'foxsports504.au':      'FoxSports504.au',
-  'foxsports504':         'FoxSports504.au',
-  'fox504':               'FoxSports504.au',
-  'foxsports505.au':      'FoxSports505.au',
-  'foxsports505':         'FoxSports505.au',
-  'fox505':               'FoxSports505.au',
-  'foxsports506.au':      'FoxSports506.au',
-  'foxsports506':         'FoxSports506.au',
-  'fox506':               'FoxSports506.au',
-  'foxsports507.au':      'FoxSports507.au',
-  'foxsports507':         'FoxSports507.au',
-  'fox507':               'FoxSports507.au',
-
-  // beIN Sports (common misspellings)
-  'beinsport1.au':        'beINSports1.au',
-  'beinsport1':           'beINSports1.au',
-  'bein1':                'beINSports1.au',
-  'beinsport2.au':        'beINSports2.au',
-  'beinsport2':           'beINSports2.au',
-  'bein2':                'beINSports2.au',
-  'beinsport3.au':        'beINSports3.au',
-  'beinsport3':           'beINSports3.au',
-  'bein3':                'beINSports3.au',
-  'beinsports1.au':       'beINSports1.au',
-  'beinsports1':          'beINSports1.au',
-  'beinsports2.au':       'beINSports2.au',
-  'beinsports2':          'beINSports2.au',
-  'beinsports3.au':       'beINSports3.au',
-  'beinsports3':          'beINSports3.au',
-
-  // Main Event
-  'main.event.ufc.au':    'MainEvent.au',
-  'mainevent.au':         'MainEvent.au',
-  'mainevent':            'MainEvent.au',
-  'main.event':           'MainEvent.au',
-
-  // ESPN (US)
-  'espn.us':              'ESPN.us',
-  'espn':                 'ESPN.us',
-  'espn1':                'ESPN.us',
-  'espn2.us':             'ESPN2.us',
-  'espn2':                'ESPN2.us',
-
-  // Sky Sports (UK)
-  'skysportsaction.uk':        'SkySportsAction.uk',
-  'skysportsaction':           'SkySportsAction.uk',
-  'sky.sports.action':         'SkySportsAction.uk',
-  'skysportscricket.uk':       'SkySportsCricket.uk',
-  'skysportscricket':          'SkySportsCricket.uk',
-  'sky.sports.cricket':        'SkySportsCricket.uk',
-  'skysportsf1.uk':            'SkySportsF1.uk',
-  'skysportsf1':               'SkySportsF1.uk',
-  'sky.sports.f1':             'SkySportsF1.uk',
-  // ... (add all the other Sky Sports entries from the artifact)
-
-  // TNT Sports (UK)
-  'tntsports1.uk':        'TNTSports1.uk',
-  'tntsports1':           'TNTSports1.uk',
-  'tnt1':                 'TNTSports1.uk',
-  'tnt.sports.1':         'TNTSports1.uk',
-  // ... (add all TNT entries)
-
-  // Other US/UK sports networks
-  'usanetwork.us':        'USANetwork.us',
-  'usanetwork':           'USANetwork.us',
-  'usa.network':          'USANetwork.us',
-  'nbcsports.us':         'NBCSports.us',
-  'nbcsports':            'NBCSports.us',
-  'nbc.sports':           'NBCSports.us',
-  'foxsports1.us':        'FoxSports1.us',
-  'foxsports1':           'FoxSports1.us',
-  'fs1':                  'FoxSports1.us',
-  'fox.sports.1':         'FoxSports1.us',
-  'foxsports2.us':        'FoxSports2.us',
-  'foxsports2':           'FoxSports2.us',
-  'fs2':                  'FoxSports2.us',
-  'fox.sports.2':         'FoxSports2.us',
-};
 
 /* ----------------- Poster URL + alias helpers (HOISTED) --- */
 
@@ -312,6 +125,7 @@ function rebuildPosterAliases() {
     'fox.sports.503': 'FoxSports503.au',
     'fox.sports.505': 'FoxSports505.au',
     'fox.sports.506': 'FoxSports506.au',
+
   };
   for (const [alias, key] of Object.entries(MANUAL)) {
     if (POSTER_MAP[key]) add(alias, key);
@@ -370,7 +184,7 @@ async function refreshPosterMap() {
 refreshPosterMap();
 
 /* --------------------------- CACHE ------------------------ */
-const CACHE_TTL = 20 * 60 * 1000; // 20 min
+const CACHE_TTL = 15 * 60 * 1000; // 15 min
 const SHORT_TTL = Number(process.env.SHORT_TTL_MS || 90 * 1000); // 90s for tokened links
 const fresh = (e, ttl = CACHE_TTL) => e && (Date.now() - e.ts) < ttl;
 const validRegion = (r) => (REGIONS.includes(r) ? r : DEFAULT_REGION);
@@ -381,10 +195,7 @@ const cache = {
   nz_tv_m3u: new Map(), nz_radio_m3u: new Map(), nz_epg: new Map(),
 
   // curated
-  a1x_text: null, a1x_entries: null, curated_groups: new Map(),
-
-  // rogue epg
-  rogue_epg_idx: new Map(), // key AU|NZ|UK|US|SPORTS|ALL -> { ts, programmes, nameIndex }
+  a1x_text: null, a1x_entries: null, curated_groups: new Map(), a1x_epg: null,
 
   // extras
   extras_text: null, extras_groups: null
@@ -471,108 +282,18 @@ function parseEPG(xml) {
       const progs = res?.tv?.programme || [];
       for (const p of progs) {
         const cid = p.$?.channel || '';
-        const start = p.$?.start || '';
-        const stop  = p.$?.stop  || '';
-        const title = (Array.isArray(p.title) ? p.title[0] : p.title) || '';
-        if (!map.has(cid)) map.set(cid, []);
-        map.get(cid).push({ start, stop, title });
+        the: {
+          const start = p.$?.start || '';
+          const stop  = p.$?.stop  || '';
+          const title = (Array.isArray(p.title) ? p.title[0] : p.title) || '';
+          if (!map.has(cid)) map.set(cid, []);
+          map.get(cid).push({ start, stop, title });
+        }
       }
       resolve(map);
     });
   });
 }
-
-
-// Add this function to your code (place it near the other parsing functions)
-
-/**
- * Parse XMLTV with channel name indexing for Rogue EPG
- * Returns { programmes: Map(channelId -> programmes[]), nameIndex: Map(normalizedName -> channelId) }
- */
-async function parseXmltvWithIndex(xmlString, buildNameIndex = true) {
-  return new Promise((resolve, reject) => {
-    xml2js.parseString(xmlString, (err, result) => {
-      if (err) return reject(err);
-      
-      const programmes = new Map();
-      const nameIndex = new Map();
-      
-      try {
-        const tv = result?.tv || {};
-        
-        // Build name index from channels if requested
-        if (buildNameIndex && tv.channel) {
-          for (const ch of tv.channel) {
-            const channelId = ch.$?.id || '';
-            if (!channelId) continue;
-            
-            // Get display name
-            const displayName = ch['display-name'] && ch['display-name'][0] 
-              ? (typeof ch['display-name'][0] === 'string' ? ch['display-name'][0] : ch['display-name'][0]._)
-              : '';
-            
-            if (displayName) {
-              // Add various normalized versions to the index
-              const normalized = normalizeId(displayName);
-              const normalizedLoose = normalizeIdLoose(displayName);
-              
-              if (normalized && !nameIndex.has(normalized)) {
-                nameIndex.set(normalized, channelId);
-              }
-              if (normalizedLoose && normalizedLoose !== normalized && !nameIndex.has(normalizedLoose)) {
-                nameIndex.set(normalizedLoose, channelId);
-              }
-              
-              // Also index the channel ID itself
-              const idNormalized = normalizeId(channelId);
-              if (idNormalized && !nameIndex.has(idNormalized)) {
-                nameIndex.set(idNormalized, channelId);
-              }
-            }
-          }
-        }
-        
-        // Parse programmes
-        if (tv.programme) {
-          for (const prog of tv.programme) {
-            const channelId = prog.$?.channel || '';
-            const start = prog.$?.start || '';
-            const stop = prog.$?.stop || '';
-            
-            // Extract title
-            let title = '';
-            if (prog.title) {
-              if (Array.isArray(prog.title)) {
-                const titleObj = prog.title[0];
-                title = typeof titleObj === 'string' ? titleObj : (titleObj?._ || titleObj || '');
-              } else {
-                title = typeof prog.title === 'string' ? prog.title : (prog.title?._ || prog.title || '');
-              }
-            }
-            
-            if (channelId && start) {
-              if (!programmes.has(channelId)) {
-                programmes.set(channelId, []);
-              }
-              programmes.get(channelId).push({
-                start,
-                stop,
-                title: String(title || '').trim()
-              });
-            }
-          }
-        }
-        
-        resolve({ programmes, nameIndex });
-        
-      } catch (parseError) {
-        reject(new Error(`XMLTV parsing error: ${parseError.message}`));
-      }
-    });
-  });
-}
-
-
 function parseTime(s) {
   if (/^\d{14}\s+[+\-]\d{4}$/.test(s)) {
     const y=+s.slice(0,4), mo=+s.slice(4,6)-1, d=+s.slice(6,8), h=+s.slice(8,10), m=+s.slice(10,12), sec=+s.slice(12,14);
@@ -602,6 +323,7 @@ function nowProgramme(list) {
     const e = parseTime(p.stop ).getTime();
     if (!Number.isNaN(s) && !Number.isNaN(e) && s <= now && now < e) return p;
   }
+  0
   return null;
 }
 
@@ -677,6 +399,7 @@ function posterFromMapExact(k) {
   }
 
   // FIX: brand collapse "<brand>-<anything>-<hash>" -> "<brand>-<hash>"
+  // Normalizes common sports/pack brands to their canonical keys in map.json
   const mBrand = /^(epl|dirtvision|dazn|tnt(?:-sports)?|sky(?:-sports?)?|fox|espn|bein(?:-sports)?|main(?:-event)?|stan(?:-sport)?|ppv)-[a-z0-9-]+-([a-z0-9]+)$/i.exec(k);
   if (mBrand) {
     const brand = mBrand[1]
@@ -767,13 +490,13 @@ const radioM3uUrlNZ = () => `${baseNZ()}/raw-radio.m3u8`;
 const epgUrlNZ      = () => `${baseNZ()}/epg.xml`;
 
 /* ---------------- Curated (A1X) helpers -------------------- */
-function normLower(s='') { return String(s||'').toLowerCase(); }
+function norm(s='') { return String(s||'').toLowerCase(); }
 function isUHD(name = '', url = '') {
-  const n = normLower(name), u = normLower(url);
+  const n = norm(name), u = norm(url);
   return /\b(uhd|4k|2160p?)\b/.test(n) || /(2160|uhd|4k|hevc|main10|h\.?265)/.test(u);
 }
-function isFHD(name = '', url = '') { const s = normLower(name + ' ' + url); return /\b(fhd|1080p?)\b/.test(s) || /(^|[^0-9])1080([^0-9]|$)/.test(s); }
-function isHD (name = '', url = '') { const s = normLower(name + ' ' + url); return /\bhd\b/.test(s) || /\b720p?\b/.test(s) || /(^|[^0-9])720([^0-9]|$)/.test(s); }
+function isFHD(name = '', url = '') { const s = norm(name + ' ' + url); return /\b(fhd|1080p?)\b/.test(s) || /(^|[^0-9])1080([^0-9]|$)/.test(s); }
+function isHD (name = '', url = '') { const s = norm(name + ' ' + url); return /\bhd\b/.test(s) || /\b720p?\b/.test(s) || /(^|[^0-9])720([^0-9]|$)/.test(s); }
 function qualityLabel(name='',url=''){ if (isUHD(name,url)) return 'UHD / 4K'; if (isFHD(name,url)) return 'FHD / 1080p'; if (isHD(name,url)) return 'HD / 720p'; return 'SD'; }
 function qualityRank(label=''){ const l=String(label).toUpperCase(); if (l.includes('UHD')) return 3; if (l.includes('FHD')) return 2; if (l.includes('HD')) return 1; return 0; }
 function baseNameClean(name=''){ return String(name).replace(/^\s*(?:UKI?\s*\|\s*|\[[^\]]+\]\s*)/i,'').replace(/\b(UHD|4K|2160p?|FHD|1080p|HD|720p|SD)\b/ig,'').replace(/\s{2,}/g,' ').trim(); }
@@ -799,21 +522,18 @@ const A1X_GROUPS = {
 };
 
 const EXTRAS_M3U_URL = process.env.EXTRAS_M3U_URL ||
-  'https://gist.githubusercontent.com/One800burner/45fd3cc98797e223881cba7996adaa8e/raw/Rogue.m3u';
+  'https://gist.githubusercontent.com/One800burner/dae77ddddc1b83d3a4d7b34d2bd96a5e/raw/1roguevip.m3u';
 
 // Curated (A1X)
 const A1X_CURATED_PRIMARY = 'https://bit.ly/a1xstream';
-const A1X_CURATED_BACKUP = 'https://a1xs.vip/a1xstream';
-// FIX: correct GitHub raw URL (refs/heads does not work on raw.githubusercontent)
-const A1X_CURATED_DIRECT = 'https://raw.githubusercontent.com/a1xmedia/m3u/main/a1x.m3u';
-
+const A1X_CURATED_BACKUP  = 'https://a1xs.vip/a1xstream';
+const A1X_CURATED_DIRECT  = 'https://raw.githubusercontent.com/a1xmedia/m3u/refs/heads/main/a1x.m3u';
+const A1X_EPG_URL = 'https://bit.ly/a1xepg';
+const UK_SPORTS_FALLBACK = 'https://forgejo.plainrock127.xyz/Mystique-Play/Mystique/raw/branch/main/countries/uk_sports.m3u';
 
 async function fetchCuratedM3U(forceFresh=false) {
   if (!forceFresh && cache.a1x_text && fresh(cache.a1x_text, CACHE_TTL)) return cache.a1x_text.text;
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36 AUIPTV-Addon',
-    'Accept': '*/*'
-  };
+  const headers = { 'User-Agent': 'Mozilla/5.0 (AUIPTV-Addon)' };
   let text = '';
   const sources = [A1X_CURATED_PRIMARY, A1X_CURATED_BACKUP, A1X_CURATED_DIRECT];
   for (const source of sources) {
@@ -875,6 +595,30 @@ async function getCuratedGroup(key, { forceFresh = false } = {}) {
     }
   } catch (_) {}
 
+  if ((!channels || channels.size === 0) && key === 'uk_sports') {
+    try {
+      const text = await (await fetch(UK_SPORTS_FALLBACK, { cache: 'no-store' })).text();
+      const entries = parseM3UEntries(text);
+      const grouped = new Map();
+      for (const e of entries) {
+        const base = baseNameClean(e.name);
+        const label = qualityLabel(e.name, e.url);
+        const rank = qualityRank(label);
+        if (!grouped.has(base)) grouped.set(base, { id: e.id || base, name: base, logo: e.logo || null, variants: [] });
+        const g = grouped.get(base);
+        if (g.variants.findIndex(v => v.label === label) < 0) g.variants.push({ label, url: e.url, rank });
+        if (!g.logo && e.logo) g.logo = e.logo;
+      }
+      channels = new Map();
+      for (const [, obj] of grouped) {
+        obj.variants.sort((a,b) => b.rank - a.rank);
+        obj.url = obj.variants[0]?.url || null;
+        const id = obj.id || obj.name;
+        channels.set(id, { id, name: obj.name, logo: obj.logo, url: obj.url, variants: obj.variants });
+      }
+    } catch (_) {}
+  }
+
   cache.curated_groups.set(ck, { ts: Date.now(), channels });
   return channels;
 }
@@ -892,12 +636,10 @@ async function fetchExtrasM3U(forceFresh = false) {
   if (!forceFresh && cache.extras_text && fresh(cache.extras_text, SHORT_TTL)) return cache.extras_text.text;
   try {
     const r = await fetch(EXTRAS_M3U_URL, { redirect: 'follow' });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const t = await r.text();
     cache.extras_text = { ts: Date.now(), text: t || '' };
     return t || '';
-  } catch (e) {
-    console.error('[fetchExtrasM3U] Failed to fetch M3U:', e.message, 'URL:', EXTRAS_M3U_URL);
+  } catch {
     cache.extras_text = { ts: Date.now(), text: '' };
     return '';
   }
@@ -908,11 +650,7 @@ async function getExtrasGroups({ forceFresh = false } = {}) {
   if (!forceFresh && cache.extras_groups && fresh(cache.extras_groups, SHORT_TTL))
     return cache.extras_groups.groups;
 
-  const text = await fetchExtrasM3U(forceFresh).catch(e => {
-    console.error('[getExtrasGroups] Fetch failed:', e);
-    return '';
-  });
-
+  const text = await fetchExtrasM3U(forceFresh);
   const entries = parseM3UEntries(text);
 
   const map = new Map(); // slug -> { slug, name, channels: Map(nameSlug -> channelObj) }
@@ -1004,190 +742,14 @@ async function getNZEPG() {
   cache.nz_epg.set('nz', { ts: Date.now(), map });
   return map;
 }
-
-// ------- DAILY EPG CACHE (memory) -------
-const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const EPGLONG_TTL_MS = Number(process.env.EPGLONG_TTL_MS || ONE_DAY_MS);
-const DAILY_XML_CACHE = new Map(); // url -> { ts, xml }
-
-async function fetchXmlDaily(url, { isGz = false, timeout = 60000 } = {}) {
-  const hit = DAILY_XML_CACHE.get(url);
-  if (hit && (Date.now() - hit.ts) < EPGLONG_TTL_MS) return hit.xml;
-
-  let lastErr;
-  for (let i = 0; i < 2; i++) {
-    try {
-      const r = await fetchWithTimeout(url, { redirect: 'follow', headers: DEFAULT_FETCH_HEADERS }, timeout);
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const ct = (r.headers.get('content-type') || '').toLowerCase();
-
-      const buf = Buffer.from(await r.arrayBuffer());
-      const xml = isGz ? zlib.gunzipSync(buf).toString('utf8') : buf.toString('utf8');
-
-      // sanity checks
-      if (ct.includes('text/html') || /^\s*<!doctype html/i.test(xml) || /^\s*<html/i.test(xml)) {
-        throw new Error('not XML (HTML returned)');
-      }
-      if (!/<tv[ >]/i.test(xml)) throw new Error('not xmltv');
-      if (!/<channel/i.test(xml) && !/<programme/i.test(xml)) {
-        throw new Error('xmltv has no channels or programmes');
-      }
-
-      // parse once and cache both
-      const parsed = await parseXmltvWithIndex(xml, /* buildNameIndex */ true);
-      DAILY_XML_CACHE.set(url, { ts: Date.now(), xml, parsed });
-      return xml;
-    } catch (e) {
-      lastErr = e;
-      await new Promise(r => setTimeout(r, 400));
-    }
-  }
-  throw lastErr || new Error('epg fetch failed');
-}
-
-
-// getRogueEPGIndex with this (daily cached + merged) - Now supports US/UK/SPORTS
-async function getRogueEPGIndex(region = 'ALL') {
-  const key = `rogue:${region}`;
-  const c = cache.rogue_epg_idx.get(key);
-  if (c && fresh(c, EPGLONG_TTL_MS)) {
-    console.log(`[getRogueEPGIndex] Using cached ${region}, channels: ${c.programmes.size}`);
-    return c;
-  }
-
-  console.log(`[getRogueEPGIndex] Building fresh index for ${region}...`);
-  
-  const list = region === 'ALL'
-    ? [...ROGUE_EPG_URLS.AU, ...ROGUE_EPG_URLS.NZ, ...ROGUE_EPG_URLS.UK, ...ROGUE_EPG_URLS.US, ...ROGUE_EPG_URLS.SPORTS]
-    : (ROGUE_EPG_URLS[region] || []);
-
-  const merged = { programmes: new Map(), nameIndex: new Map() };
-  let successCount = 0;
-
-for (const u of list) {
+async function getA1XEPG() {
+  if (cache.a1x_epg && fresh(cache.a1x_epg, CACHE_TTL)) return cache.a1x_epg.map;
   try {
-    console.log(`[getRogueEPGIndex] Fetching ${u}...`);
-
-    // pull from daily cache or fetch+parse (handles .gz)
-    let hit = DAILY_XML_CACHE.get(u);
-    const expired = !hit || !hit.parsed || (Date.now() - (hit.ts || 0)) > EPGLONG_TTL_MS;
-    if (expired) {
-      await fetchXmlDaily(u, { isGz: /\.gz($|\?)/i.test(u), timeout: 60000 });
-      hit = DAILY_XML_CACHE.get(u);
-    }
-    if (!hit || !hit.parsed) throw new Error('no parsed EPG in cache');
-
-    const { programmes, nameIndex } = hit.parsed;
-    console.log(`[getRogueEPGIndex] Merged ${programmes.size} channels from ${u}`);
-
-    // merge programmes
-    for (const [cid, arr] of programmes) {
-      const cur = merged.programmes.get(cid) || [];
-      merged.programmes.set(cid, cur.concat(arr));
-    }
-
-    // merge name index
-    for (const [k, v] of nameIndex) {
-      if (!merged.nameIndex.has(k)) merged.nameIndex.set(k, v);
-    }
-
-    successCount++;
-  } catch (e) {
-    console.error('[getRogueEPGIndex] failed', u, e.message);
-  }
-}
-
-  console.log(`[getRogueEPGIndex] ${region} complete: ${successCount}/${list.length} sources, ${merged.programmes.size} channels, ${merged.nameIndex.size} name mappings`);
-
-  // Sort programmes per channel once
-  for (const [cid, arr] of merged.programmes) {
-    arr.sort((a, b) => String(a.start).localeCompare(String(b.start)));
-  }
-
-  const out = { ts: Date.now(), ...merged };
-  cache.rogue_epg_idx.set(key, out);
-  return out;
-}
-
-// --- Rogue EPG Preload & Region Helper ---
-
-
-// Boot-time preload (fire and forget) - Commented out to avoid cold start issues on Lambda
-// (async () => {
-// for (const region of Object.keys(ROGUE_EPG_URLS)) {
-// getRogueEPGIndex(region).catch(e => console.warn('[rogue preload]', region, e.message));
-// }
-// })();
-
-
-// Scope index load by curated key instead of forcing ALL
-async function rogueIndexForCatalog(curatedKeyOrSlug = '') {
-  const key = String(curatedKeyOrSlug).toLowerCase();
-  if (key.includes('uk')) return getRogueEPGIndex('UK');
-  if (key.includes('us')) return getRogueEPGIndex('US');
-  if (key.includes('sport') || key.includes('epl')) return getRogueEPGIndex('SPORTS');
-  if (key.includes('nz')) return getRogueEPGIndex('NZ');
-  return getRogueEPGIndex('AU');
-}
-// Optional manual refresh route (hit in browser if needed)
-app.get('/debug/epg/refresh', (_req, res) => {
-  DAILY_XML_CACHE.clear();
-  cache.rogue_epg_idx.clear();
-  res.json({ ok: true, cleared: true });
-});
-
-function normalizeId(s='') { return String(s).toLowerCase().replace(/[^a-z0-9]+/g,''); }
-function resolveEpgChannelId({ cid, name, idx, aliases = EPG_ALIASES }) {
-  // 1) direct/alias hits
-  const lowerStrict = normalizeId(cid);
-  if (aliases && aliases[lowerStrict]) return aliases[lowerStrict];
-  if (idx.programmes.has(cid)) return cid;
-
-  // 2) try strict id + loose id
-  const byIdStrict = idx.nameIndex.get(lowerStrict);
-  if (byIdStrict) return byIdStrict;
-  const byIdLoose = idx.nameIndex.get(normalizeIdLoose(cid));
-  if (byIdLoose) return byIdLoose;
-
-  // 3) try name (strict then loose)
-  const byNameStrict = idx.nameIndex.get(normalizeId(name));
-  if (byNameStrict) return byNameStrict;
-  const byNameLoose = idx.nameIndex.get(normalizeIdLoose(name));
-  if (byNameLoose) return byNameLoose;
-
-  // 4) progressive collapse of cid parts (and a loose version)
-  const parts = String(cid).split(/[._-]/g).filter(Boolean);
-  for (let i = parts.length; i > 0; i--) {
-    const joined = parts.slice(0, i).join(' ');
-    const probeStrict = normalizeId(joined);
-    const hitStrict = idx.nameIndex.get(probeStrict);
-    if (hitStrict) return hitStrict;
-    const probeLoose = normalizeIdLoose(joined);
-    const hitLoose = idx.nameIndex.get(probeLoose);
-    if (hitLoose) return hitLoose;
-  }
-
-  // 5) final attempt: drop simple region tags from the name
-  const alt = cleanNameForEpg(name).replace(/\b(uk|us|usa|nz|au|ca|eu)\b/ig, '').trim();
-  if (alt && alt !== name) {
-    const hit = idx.nameIndex.get(normalizeIdLoose(alt));
-    if (hit) return hit;
-  }
-  return null;
-}
-// Clean noisy names like "Sky Sport 1 [BU] (HD)"
-function cleanNameForEpg(name = '') {
-  return String(name)
-    .replace(/\[[^\]]*\]/g, ' ')       // [BU], [HD], etc
-    .replace(/\([^)]*\)/g, ' ')         // (unstable), (US), etc
-    .replace(/\b(UHD|4K|2160p|FHD|1080p|HD|720p|SD)\b/ig, ' ')
-    .replace(/\b(backup|alt|feed|test|unstable)\b/ig, ' ')
-    .replace(/\s{2,}/g, ' ')            // collapse spaces
-    .trim();
-}
-
-function normalizeIdLoose(s = '') {
-  return cleanNameForEpg(s).toLowerCase().replace(/[^a-z0-9]+/g, '');
+    const xml = await (await fetch(A1X_EPG_URL)).text();
+    const map = await parseEPG(xml);
+    cache.a1x_epg = { ts: Date.now(), map };
+    return map;
+  } catch { cache.a1x_epg = { ts: Date.now(), map: new Map() }; return new Map(); }
 }
 
 /* ---------------------- Manifest helpers ------------------ */
@@ -1219,7 +781,7 @@ function buildHeaders(url) {
 function buildManifestV3(selectedRegion, genreOptions) {
   return {
     id: 'com.joshargh.auiptv',
-    version: '2.7.6',
+    version: '2.7.2',
     name: `AU IPTV (${selectedRegion})`,
     description: 'Australian + NZ live streams with optional international TV, Sports and Additional Packs.',
     types: ['tv'],
@@ -1237,8 +799,6 @@ function buildManifestV3(selectedRegion, genreOptions) {
 const builder = new addonBuilder(buildManifestV3(DEFAULT_REGION, [
   'Traditional Channels','Other Channels','All TV Channels','Regional Channels','Radio'
 ]));
-
-
 
 /* ---------------------- Catalog Handler ------------------- */
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
@@ -1292,23 +852,6 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
 
   builder.manifest = buildManifestV3(region, genreOptions);
 
-  // ---------------- EPG: preload rogue indexes (US/UK/Sports focus) -----------------
-  // We only load these (cheap, cached) indexes if we are actually showing
-  // curated or extras catalogs. AU/NZ keep using the regional EPG.
-  // ---------------- EPG: preload rogue indexes (best-effort) -----------------
-  let rogueIdx = null;
-  if (contentKind === 'tv' && (isCurated || isExtras)) {
-  try { 
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('EPG load timeout')), 60000));
-    rogueIdx = await Promise.race([timeoutPromise, rogueIndexForCatalog(curatedKey || extrasSlug)]); 
-  } catch (e) {
-    console.error('[rogueIndexForCatalog] Failed or timed out:', e);
-    rogueIdx = null;
-  }
-  }
-
-
-
   let channels;
   if (isNZ) channels = await getNZChannels(contentKind);
   else if (isCurated) channels = await getCuratedGroup(curatedKey);
@@ -1322,14 +865,6 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
   const epg = (contentKind === 'tv')
     ? (isNZ ? await getNZEPG() : (isCurated || isExtras ? new Map() : await getEPG(contentRegion)))
     : new Map();
-
-  // Helper to pull EPG list for curated/extras, using Rogue (US/UK/Sports)
-  const epgFromIndexes = (ch) => {
-    if (!rogueIdx) return [];
-    const id = resolveEpgChannelId({ cid: ch.id, name: ch.name, idx: rogueIdx });
-    if (id && rogueIdx.programmes.has(id)) return rogueIdx.programmes.get(id) || [];
-    return [];
-  };
 
   const metas = [];
   for (const [cid, ch] of channels) {
@@ -1346,7 +881,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
       }
       if (!include) continue;
 
-      const list = (isCurated || isExtras) ? epgFromIndexes(ch) : (epg.get(cid) || []);
+      const list = epg.get(cid) || [];
       const nowp = nowProgramme(list);
       const release = nowp ? `${fmtLocal(nowp.start, tz)} | ${nowp.title}`
                            : (list[0] ? `${fmtLocal(list[0].start, tz)} | ${list[0].title}`
@@ -1452,23 +987,14 @@ builder.defineMetaHandler(async ({ type, id }) => {
     };
   }
 
-  // TV meta – fill EPG for all types including curated/extras using Rogue indexes (US/UK/Sports)
-  let list = [];
+  // TV meta – enrich with EPG only for AU/NZ (we don't control curated/extras EPG)
+  let epg = new Map();
   try {
-    if (region === 'NZ') {
-      const epg = await getNZEPG();
-      list = epg.get(cid) || [];
-      } else if (region === 'SP' || region === 'EX') {
-      const rogueIdx = await rogueIndexForCatalog(parsed.curatedKey || parsed.extrasSlug).catch(() => null);      if (rogueIdx) {
-        const id = resolveEpgChannelId({ cid: ch.id, name: ch.name, idx: rogueIdx });
-        if (id && rogueIdx.programmes.has(id)) list = rogueIdx.programmes.get(id) || [];
-      }
-    } else {
-      const epg = await getEPG(region);
-      list = epg.get(cid) || [];
-    }
+    if (region === 'NZ') epg = await getNZEPG();
+    else if (region !== 'SP' && region !== 'EX') epg = await getEPG(region);
   } catch {}
 
+  const list = epg.get(cid) || [];
   const nowp = nowProgramme(list);
 
   const desc =
@@ -1594,153 +1120,6 @@ app.get('/redir/:curatedKey/:cid.m3u8', async (req, res) => {
   }
 });
 
-// ---------------- remainder of file (routes + export) is unchanged ----------------
-
-// Pull helpers from xml2js we already required above
-const { parseStringPromise, Builder } = xml2js;
-
-// NOTE: avoid clobbering the earlier `norm()` used by quality detection.
-function normKey(s) {
-  return (s || '').toString().toLowerCase().replace(/[^a-z0-9]+/g, '');
-}
-function uniqBy(arr, keyFn) {
-  const seen = new Set();
-  return arr.filter(x => {
-    const k = keyFn(x);
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
-}
-
-// Merge multiple XMLTVs: combine <channel> & <programme> and de-dupe by ids & start times.
-async function mergeXmltvs(xmlStrings) {
-  const docs = await Promise.all(xmlStrings.map(x => parseStringPromise(x, { explicitArray: true, mergeAttrs: true })));
-  const out = { tv: { channel: [], programme: [] } };
-
-  for (const d of docs) {
-    const tv = d.tv || {};
-    if (tv.channel)   out.tv.channel.push(...tv.channel);
-    if (tv.programme) out.tv.programme.push(...tv.programme);
-  }
-
-  // De-dupe channels by id
-  out.tv.channel = uniqBy(out.tv.channel, ch => (ch.$?.id || '').toString());
-
-  // De-dupe programmes by (channel|start|title)
-  out.tv.programme = uniqBy(out.tv.programme, pr => {
-    const id = pr.$?.channel || '';
-    const st = pr.$?.start || '';
-    const t  = normKey((pr.title?.[0]?._) || (pr.title?.[0]) || '');
-    return `${id}|${st}|${t}`;
-  });
-
-  // Rebuild XML
-  const xml = new Builder({ headless: true }).buildObject(out);
-  return xml;
-}
-
-async function fetchText(u) {
-  const r = await fetch(u, { redirect: 'follow' });
-  if (!r.ok) throw new Error(`EPG fetch failed ${r.status} for ${u}`);
-  return await r.text();
-}
-
-// Figure out which feeds we need based on the URL flags the user selected on the landing page
-function computeEpgFeedList(region, flags) {
-  const urls = new Set();
-
-  // Always include AU region unless explicitly disabled
-  if (!flags.noau) urls.add(EPG_SOURCES.AU_REGION(region));
-
-  // NZ toggles or Extras explicitly NZ
-  if (flags.nz || flags.nzradio || flags.nzsports || flags.nzdefault || flags.extrasRegion === 'nz') {
-    urls.add(EPG_SOURCES.NZ);
-  }
-
-  // Sports packs
-  const anySports =
-    flags.ausports || flags.uksports || flags.ussports || flags.casports ||
-    flags.eusports || flags.worldsports || flags.epl || flags.extrasHasSports;
-
-  if (anySports) {
-    // Extras routing:
-    if (flags.extrasRegion === 'au') {
-      // Rogue KAYO Sports Extra: AU -> pull KAYO (+Foxtel for Fox/beIN/Main Event ids)
-      urls.add(EPG_SOURCES.KAYO);
-      urls.add(EPG_SOURCES.FOXTEL);
-    } else if (flags.extrasRegion === 'nz') {
-      // Extra: NZ | SKY sport -> NZ XMLTV only
-      urls.add(EPG_SOURCES.NZ);
-    } else if (flags.extrasRegion === 'uk') {
-      // Extra: UK sport -> rely on Rogue/A1X mapping; don't add AU/NZ feeds here
-      // (no action)
-    } else {
-      // Non-extras or unspecified region sports -> default AU sports (Kayo/Foxtel)
-      urls.add(EPG_SOURCES.KAYO);
-      urls.add(EPG_SOURCES.FOXTEL);
-    }
-  }
-
-  return Array.from(urls);
-}
-
-// Parse selection flags from request path for the EPG merge pipeline (boolean fields expected)
-function parseEpgFlagsFromPath(pathname) {
-  const has = seg => pathname.includes(`/${seg}`);
-  // detect extras group slug if present, e.g. /extras/exgrp-au-kayo-sports/...
-  const parts = pathname.split('/').filter(Boolean);
-  const exgrp = parts.find(p => /^exgrp-/i.test(p)) || '';
-  const exgrpLower = exgrp.toLowerCase();
-
-  let extrasRegion = null;
-  if (/\bau\b/.test(exgrpLower) || /\bkayo\b/.test(exgrpLower)) extrasRegion = 'au';
-  else if (/\bnz\b/.test(exgrpLower) || /\bsky\b/.test(exgrpLower)) extrasRegion = 'nz';
-  else if (/\buk\b/.test(exgrpLower)) extrasRegion = 'uk';
-  else if (/\bus\b/.test(exgrpLower)) extrasRegion = 'us';
-  else if (/\bca\b/.test(exgrpLower) || /canad/.test(exgrpLower)) extrasRegion = 'ca';
-  else if (/\beu\b/.test(exgrpLower) || /europe/.test(exgrpLower)) extrasRegion = 'eu';
-
-  return {
-    noau:        has('noau'),
-    radio:       has('radio'),
-    ausports:    has('ausports'),
-    nz:          has('nz'),
-    nzradio:     has('nzradio'),
-    nzdefault:   has('nzdefault'),
-    nzsports:    has('nzsports'),
-    uktv:        has('uktv'),
-    uksports:    has('uksports'),
-    ustv:        has('ustv'),
-    ussports:    has('ussports'),
-    catv:        has('catv'),
-    casports:    has('casports'),
-    eusports:    has('eusports'),
-    worldsports: has('worldsports'),
-    epl:         has('epl'),
-    extras:      has('extras'),
-    extrasRegion,
-    // include 'sky' too so "SKY sport" triggers sports handling
-    extrasHasSports: /exgrp-.*(sport|kayo|fox|bein|mainevent|sky)/i.test(pathname),
-  };
-}
-
-// Merge and cache final EPG XML for the given region+flags key
-async function getMergedEpg(region, pathname) {
-  const key = `epg:${region}:${pathname}`;
-  const now = Date.now();
-  const cached = EPG_CACHE.get(key);
-  if (cached && now - cached.ts < EPG_CACHE_TTL_MS) return cached.xml;
-
-  const flags = parseEpgFlagsFromPath(pathname);
-  const feeds = computeEpgFeedList(region, flags);
-  const xmls = await Promise.all(feeds.map(fetchText));
-  const merged = await mergeXmltvs(xmls);
-
-  EPG_CACHE.set(key, { xml: merged, ts: now });
-  return merged;
-}
-
 /* ---------------------- EXPRESS ROUTES -------------------- */
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -1752,51 +1131,6 @@ app.use((req, res, next) => {
 
 app.get('/healthz', (_req, res) => res.type('text/plain').send('ok'));
 app.get('/stats', (_req, res) => res.json({ installs: _memStats.installs || 0 }));
-
-// --- Debug: EPG status & matcher ---
-app.get('/debug/epg/status', async (_req, res) => {
-  try {
-    const rg  = await getRogueEPGIndex('ALL').catch(() => null);
-    res.json({
-      rogue: rg ? { channels: rg.nameIndex.size, programmeChannels: rg.programmes.size } : null
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get('/debug/epg/resolve', async (req, res) => {
-  try {
-    const name = String(req.query.name || '');
-    const cid  = String(req.query.cid || name);
-    const out = { input: { name, cid } };
-    const rg  = await getRogueEPGIndex('ALL').catch(() => null);
-
-    if (rg) {
-      const id = resolveEpgChannelId({ cid, name, idx: rg });
-      out.rogue = {
-        matched: id,
-        sample: id ? (rg.programmes.get(id) || []).slice(0, 3) : []
-      };
-    }
-    res.json(out);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// New route for full EPG debug
-app.get('/epg/debug/all', async (_req, res) => {
-  try {
-    const rogue = await getRogueEPGIndex('ALL');
-    res.json({
-      programmeChannels: Array.from(rogue.programmes.keys()).sort(),
-      nameIndex: Array.from(rogue.nameIndex.entries()).sort((a,b) => a[0].localeCompare(b[0]))
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
 
 // static assets (public/)
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -1818,7 +1152,6 @@ app.get('/extras/groups', async (_req, res) => {
     for (const [, g] of groups) arr.push({ slug: g.slug, name: g.name, count: (g.channels?.size || 0) });
     res.json({ groups: arr });
   } catch (e) {
-    console.error('[/extras/groups] Error:', e);
     res.status(500).json({ error: e?.message || 'failed' });
   }
 });
@@ -1829,8 +1162,7 @@ function baseUrl(req) {
   const host  = req.headers['x-forwarded-host']  || req.headers.host;
   return `${proto}://${host}`;
 }
-// Parse flags from request path for the *manifest* routes (returns { regionRaw, flags:Set })
-function parseRequestFlagsFromPath(reqPath) {
+function parseFlagsFromPath(reqPath) {
   const parts = reqPath.split('/').filter(Boolean);
   const flags = new Set(parts.slice(1));
   if (flags.has('sports')) ['uksports','ussports','casports','ausports','nzsports','eusports','worldsports','epl'].forEach(f=>flags.add(f));
@@ -1846,10 +1178,10 @@ function buildGenresFromFlags(region, flags, extrasList = []) {
   return opts;
 }
 
-app.get(/^\/[^^/]+(?:\/[^/]+)*\/manifest\.json$/, async (req, res) => {
+app.get(/^\/[^/]+(?:\/[^/]+)*\/manifest\.json$/, async (req, res) => {
   try {
     markInstall();
-    const { regionRaw, flags } = parseRequestFlagsFromPath(req.path);
+    const { regionRaw, flags } = parseFlagsFromPath(req.path);
     const region = validRegion(regionRaw);
 
     let extrasList = [];
@@ -1884,31 +1216,6 @@ app.get('/', (req, res) => {
   res.type('text/plain').send('UI not packaged. Place your index.html in /public.');
 });
 
-// Return merged XMLTV for the current selection (used by clients that want XML)
-app.get(/^\/([^/]+)(?:\/.*)?\/epg\.xml$/, async (req, res) => {
-  try {
-    const region = decodeURIComponent(req.params[0] || 'Brisbane');
-    const xml = await getMergedEpg(region, req.path);
-    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=60'); // clients can re-use a minute
-    res.send(xml);
-  } catch (e) {
-    res.status(500).send(`<!-- EPG error: ${e.message} -->`);
-  }
-});
-
-// Optional: JSON view for debugging (handy when testing Rogue mapping)
-app.get(/^\/([^/]+)(?:\/.*)?\/epg\.json$/, async (req, res) => {
-  try {
-    const region = decodeURIComponent(req.params[0] || 'Brisbane');
-    const xml = await getMergedEpg(region, req.path);
-    const obj = await parseStringPromise(xml, { explicitArray: true, mergeAttrs: true });
-    res.json({ channels: (obj.tv?.channel || []).length, programmes: (obj.tv?.programme || []).length });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
 /* ----------------------- SDK Router ----------------------- */
 const sdkRouter = getRouter(builder.getInterface());
 app.use((req, _res, next) => {
@@ -1919,37 +1226,6 @@ app.use((req, _res, next) => {
   next();
 });
 app.use('/', sdkRouter);
-
-// Quick visibility into what we indexed from Rogue
-app.get('/epg/debug', async (_req, res) => {
-  try {
-    const rogue = await getRogueEPGIndex('ALL');
-    const sample = (idx) => Array.from(idx.programmes.entries()).slice(0, 3)
-      .map(([id, arr]) => ({ id, items: arr.length, first: arr[0]?.title }));
-    res.json({
-      rogue: { channels: rogue.nameIndex.size, programmeChannels: rogue.programmes.size, sample: sample(rogue) }
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Try to resolve a single channel against the indexes
-app.get('/epg/resolve', async (req, res) => {
-  const name = req.query.name || '';
-  const cid  = req.query.cid  || '';
-  try {
-    const rogue = await getRogueEPGIndex('ALL');
-    const tryIdx = (label, idx) => {
-      const id = resolveEpgChannelId({ cid, name, idx });
-      const programmes = id ? (idx.programmes.get(id) || []) : [];
-      return { label, resolvedId: id, count: programmes.length, first: programmes[0]?.title };
-    };
-    res.json({ rogue: tryIdx('rogue', rogue) });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
 
 /* ------------------- Export / Local run ------------------- */
 module.exports.handler = serverless(app);
