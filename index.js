@@ -1539,7 +1539,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
 
   const { region, cid, kind } = parsed;
 
-  // Load channel
+  // ----- load channel -----
   let ch, tz = 'Australia/Sydney';
   if (region === 'NZ') {
     tz = 'Pacific/Auckland';
@@ -1564,6 +1564,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
 
   const squarePoster = posterAny(regionKey, ch);
 
+  // ----- radio unchanged -----
   if (kind === 'radio') {
     return {
       meta: {
@@ -1580,7 +1581,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
     };
   }
 
-  // TV meta – fill EPG for all types including curated/extras using Rogue indexes (US/UK/Sports)
+  // ----- TV: build EPG line (no trailing label) -----
   let list = [];
   try {
     if (region === 'NZ') {
@@ -1595,8 +1596,6 @@ builder.defineMetaHandler(async ({ type, id }) => {
         const resolved = resolveEpgChannelId({ cid: ch.id, name: ch.name, idx });
         if (resolved && idx.programmes.has(resolved)) list = idx.programmes.get(resolved);
       }
-
-      // Always warm in background; don’t await
       warmRogueIndex(scope);
     } else {
       const epg = await getEPG(region);
@@ -1605,49 +1604,25 @@ builder.defineMetaHandler(async ({ type, id }) => {
   } catch {}
 
   const nowp = nowProgramme(list);
-
-  const desc =
-    region === 'NZ' ? 'Live NZ television' :
-    region === 'SP' ? 'Curated' :
-    region === 'EX' ? 'Additional Pack' :
-    'Live television streaming';
-
-  const release = nowp
+  const epgLine = nowp
     ? `${fmtLocal(nowp.start, tz)} - ${fmtLocal(nowp.stop, tz)} | ${nowp.title}`
-    : (list[0]
-        ? `${fmtLocal(list[0].start, tz)} | ${list[0].title}`
-        : (region === 'NZ'
-            ? 'Live NZ TV'
-            : ((region === 'SP' || region === 'EX')
-                ? 'EPG warming up…'
-                : 'Live TV')));
-
-  // Tweak for swapped positions in detail view
-  let metaName = ch.name;
-  let metaReleaseInfo = desc;  // Default to current desc in subtitle position
-  let metaDesc = release;      // Default to EPG in description
-
-  if (list.length) {
-    const p = nowp || list[0];  // Current or next program
-    metaName = p.title;         // Program title as main name (the "show")
-    metaReleaseInfo = ch.name;  // Channel name in subtitle (where EPG was)
-    metaDesc = `${fmtLocal(p.start, tz)} - ${fmtLocal(p.stop, tz)} | ${desc}`;  // Times | original desc
-  }
+    : (list[0] ? `${fmtLocal(list[0].start, tz)} | ${list[0].title}` : '');
 
   return {
     meta: {
       id,
       type: 'tv',
-      name: metaName,
+      name: ch.name,              // keep channel name to avoid selection issues
       poster: squarePoster,
       background: squarePoster,
       logo: squarePoster,
       posterShape: 'square',
-      description: metaDesc,
-      releaseInfo: metaReleaseInfo
+      description: epgLine || ch.name, // SUMMARY shows current/next EPG only
+      releaseInfo: ch.name             // small subtitle = channel name
     }
   };
 });
+
 
   /* ------------------------- Stream Handler ----------------- */
   function curatedRedirectUrl({ curatedKey, cid, label }) {
