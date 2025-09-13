@@ -18,6 +18,7 @@ except Exception:
 # ==================== CONFIG ====================
 ROOT = os.path.dirname(__file__)
 OUT_DIR = os.path.join(ROOT, "images")
+MANUAL_DIR = os.path.join(ROOT, "manualimage")
 SIZE = 1024
 PAD = 32
 BG_DARK = (24, 24, 24, 255)
@@ -46,13 +47,13 @@ INPUT_MAP_CANDIDATES = [
 ]
 
 # Speed knobs
-HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "60"))  # Increased timeout
+HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "120"))  # Increased timeout
 MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONC", "64"))
 MAX_WORKERS = max(4, (os.cpu_count() or 8) * 2)
 
 # Gentle per-host rate limits (seconds between requests) for picky CDNs
 HOST_RATELIMITS = {
-    "watch.foxtel.com.au": 1.2,          # 403 if hammered / no referer
+    "watch.foxtel.com.au": 2.0,          # 403 if hammered / no referer
     "imageresizer.static9.net.au": 0.6,  # 400 if spammy
     "novafm.com.au": 1.0,                # 429
 }
@@ -64,6 +65,12 @@ HOST_REFERER = {
 
 _HOST_LOCKS: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 _HOST_NEXT: Dict[str, float] = defaultdict(float)
+
+UAS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+]
 
 def _sanitize_logo_url(u: str) -> str:
     # de-html &amp; and space -> %20
@@ -113,7 +120,11 @@ def js_hash32_base36(s: str) -> str:
 
 async def get_text(session: aiohttp.ClientSession, url: str, semaphore: asyncio.Semaphore) -> str:
     async with semaphore:
-        async with session.get(url, timeout=HTTP_TIMEOUT, allow_redirects=True) as r:
+        headers = {
+            "User-Agent": random.choice(UAS),
+            "Accept-Language": "en-AU,en;q=0.9,en-GB;q=0.8,en-US;q=0.7"
+        }
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=HTTP_TIMEOUT, sock_read=30, sock_connect=30), allow_redirects=True, headers=headers) as r:
             r.raise_for_status()
             return await r.text()
 
@@ -148,6 +159,7 @@ async def get_bytes(session: aiohttp.ClientSession, url: str, semaphore: asyncio
 
         # headers
         headers = {
+            "User-Agent": random.choice(UAS),
             "Accept-Language": "en-AU,en;q=0.9,en-GB;q=0.8,en-US;q=0.7"
         }
         referer = HOST_REFERER.get(host)
@@ -159,13 +171,13 @@ async def get_bytes(session: aiohttp.ClientSession, url: str, semaphore: asyncio
             headers["Referer"] = origin + "/"
             headers["Origin"]  = origin
 
-        # up to 3 attempts with small backoff
-        for attempt in range(3):
+        # up to 5 attempts with backoff
+        for attempt in range(5):
             try:
-                async with session.get(url, timeout=HTTP_TIMEOUT, allow_redirects=True, headers=headers) as r:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=HTTP_TIMEOUT, sock_read=30, sock_connect=30), allow_redirects=True, headers=headers) as r:
                     # polite retry on 429/403/400
-                    if r.status in (429, 403, 400) and attempt < 2:
-                        await asyncio.sleep(0.6 + attempt * 0.7)
+                    if r.status in (429, 403, 400) and attempt < 4:
+                        await asyncio.sleep(2 + attempt * 2)
                         await _wait_host_gate(host)
                         # Static9: try original S3 as a special fallback
                         if r.status in (400, 403) and "imageresizer.static9.net.au" in host:
@@ -176,6 +188,7 @@ async def get_bytes(session: aiohttp.ClientSession, url: str, semaphore: asyncio
                                 host = u.netloc.lower()
                                 # switch headers to neutral for S3
                                 headers = {
+                                    "User-Agent": random.choice(UAS),
                                     "Referer": f"{u.scheme}://{u.netloc}/",
                                     "Origin":  f"{u.scheme}://{u.netloc}",
                                     "Accept-Language": "en-AU,en;q=0.9,en-GB;q=0.8,en-US;q=0.7"
@@ -191,8 +204,8 @@ async def get_bytes(session: aiohttp.ClientSession, url: str, semaphore: asyncio
                             return text_placeholder_png(os.path.splitext(os.path.basename(url))[0])
                     return content
             except aiohttp.ClientResponseError as e:
-                if e.status in (429, 403, 400, 404) and attempt < 2:
-                    await asyncio.sleep(0.8 + attempt * 0.8)
+                if e.status in (429, 403, 400, 404) and attempt < 4:
+                    await asyncio.sleep(2 + attempt * 2)
                     await _wait_host_gate(host)
                     if e.status == 404 and '-1-' in url:
                         url = url.replace('-1-', '-')
@@ -201,8 +214,8 @@ async def get_bytes(session: aiohttp.ClientSession, url: str, semaphore: asyncio
                     continue
                 raise
             except aiohttp.ClientConnectorError as e:
-                if attempt < 2:
-                    await asyncio.sleep(1.0 + attempt * 1.0)
+                if attempt < 4:
+                    await asyncio.sleep(2 + attempt * 2)
                     continue
                 raise
 
@@ -410,7 +423,10 @@ async def gather_with_progress(tasks, desc="Processing", unit="task"):
     with tqdm(total=len(tasks), desc=desc, unit=unit) as pbar:
         for fut in asyncio.as_completed(tasks):
             try:
-                res = await fut
+                res = await asyncio.wait_for(fut, timeout=HTTP_TIMEOUT + 10)
+            except asyncio.TimeoutError:
+                print("Task timeout")
+                res = ["?", "?", "?", "timeout", "?"]
             finally:
                 pbar.update(1)
             results.append(res)
@@ -431,9 +447,6 @@ async def main():
     async with aiohttp.ClientSession(
         connector=connector,
         headers={
-            # Realistic browser UA helps some CDNs
-            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                           "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"),
             "Accept": "*/*",
         }
     ) as session:
@@ -473,18 +486,104 @@ async def main():
             except Exception as e:
                 return [slug, cid, source, f"img-{type(e).__name__}", logo_url or ""]
 
-        tasks = [process_channel(cid, name, logo_url, source) for cid, name, logo_url, source in channels]
+        tasks = [asyncio.create_task(process_channel(cid, name, logo_url, source)) for cid, name, logo_url, source in channels]
         results = await gather_with_progress(tasks, desc="Building posters", unit="ch")
-        skipped_rows.extend([r for r in results if r is not None])
+        skipped_rows.extend([r for r in results if r is not None and isinstance(r, list)])
+
+    # Process manual images
+    if os.path.exists(MANUAL_DIR):
+        for fn in os.listdir(MANUAL_DIR):
+            if not fn.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.svg')):
+                continue
+            key, ext = os.path.splitext(fn)
+            in_path = os.path.join(MANUAL_DIR, fn)
+            with open(in_path, 'rb') as f:
+                buf = f.read()
+            if ext.lower() == '.svg' and cairosvg:
+                try:
+                    buf = cairosvg.svg2png(bytestring=buf, output_width=SIZE, output_height=SIZE)
+                except Exception as e:
+                    print(f"Warning: Failed to convert SVG {fn}: {e}")
+                    continue
+            slug = slugify_path(key)
+            out = os.path.join(OUT_DIR, f"{slug}1024.png")
+            if os.path.exists(out):
+                continue
+            pad_save_png(buf, out)
+            web_path = f"/images/{slug}1024.png"
+            mapping[key] = web_path
+            saved += 1
+
+    # Force include specific mappings
+    forced_mappings = {
+        "Fox.Cricket": "/images/foxcricket-au1024.png",
+        "Fox.League": "/images/foxleague-au1024.png",
+        "Fox Sports 503": "/images/foxsports503-au1024.png",
+        "Fox Footy": "/images/foxfooty-au1024.png",
+        "Fox Sports 505": "/images/foxsports505-au1024.png",
+        "Fox Sports 506": "/images/foxsports506-au1024.png",
+        "Fox More": "/images/foxsportsmore-au1024.png",
+        "Fox More+": "/images/foxsportsmore-au1024.png",
+        "ESPN 1": "/images/espn-us1024.png",
+        "ESPN 2": "/images/espn2-us1024.png",
+        "Main Event UFC": "/images/ppv-events-dummy-us1024.png",
+        "beIN Sports 1": "/images/bein-t0gazj1024.png",
+        "beIN Sports 2": "/images/bein-thhxdq1024.png",
+        "beIN Sports 3": "/images/bein-tyjjrx1024.png",
+        "fox cricket": "/images/foxcricket-au1024.png",
+        "Fox Cricket": "/images/foxcricket-au1024.png",
+        "Fox League": "/images/foxleague-au1024.png",
+        "Main.Event.Ufc.au": "/images/ppv-events-dummy-us1024.png",
+        "BeinSport1.au": "/images/bein-t0gazj1024.png",
+        "BeinSport2.au": "/images/bein-thhxdq1024.png",
+        "BeinSport3.au": "/images/bein-tyjjrx1024.png",
+        "ABC": "/images/abc-us1024.png",
+        "ABC.us": "/images/abc-us1024.png",
+        "ABC News Live": "/images/abc-news-live-us1024.png",
+        "CBS": "/images/cbs-us1024.png",
+        "CBS.us": "/images/cbs-us1024.png",
+        "FOX": "/images/fox-us1024.png",
+        "FOX.us": "/images/fox-us1024.png",
+        "Fox.us": "/images/fox-us1024.png",
+        "NBC": "/images/nbc-us1024.png",
+        "NBC.us": "/images/nbc-us1024.png",
+        "fox-11wj5xc": "/images/foxcricket-au1024.png",
+        "fox-uz40dx":  "/images/foxcricket-au1024.png",
+        "fox-11wj5xd": "/images/foxleague-au1024.png",
+        "fox-1534l9x": "/images/foxleague-au1024.png",
+        "fox-dolunp":  "/images/foxleague-au1024.png",
+        "fox-11wj5xe": "/images/foxfooty-au1024.png",
+        "fox-15k67o4": "/images/foxfooty-au1024.png",
+        "fox-11wj5xf": "/images/foxsportsmore-au1024.png",
+        "fox-1617u2b": "/images/foxsportsmore-au1024.png",
+        "fox-11wj5xg": "/images/foxsports503-au1024.png",
+        "fox-16i9ggi": "/images/foxsports503-au1024.png",
+        "fox-11wj5xh": "/images/foxsports505-au1024.png",
+        "fox-16zb2up": "/images/foxsports505-au1024.png",
+        "fox-11wj5xi": "/images/foxsports506-au1024.png",
+        "espn-45omt7": "/images/espn-us1024.png",
+        "espn-70rp1i": "/images/espn2-us1024.png",
+        "Main Event UFC": "/images/ppv-events-dummy-us1024.png",
+        "beIN Sports 1": "/images/bein-t0gazj1024.png",
+        "beIN Sports 2": "/images/bein-thhxdq1024.png",
+        "beIN Sports 3": "/images/bein-tyjjrx1024.png"
+    }
+    for k, v in forced_mappings.items():
+        if k not in mapping:
+            mapping[k] = v
+            # Check if file exists, warn if not
+            out_path = os.path.join(OUT_DIR, v.split('/')[-1])
+            if not os.path.exists(out_path):
+                print(f"Warning: Forced mapping {k} -> {v} but file {out_path} does not exist.")
 
     # Write maps
     images_map_path = os.path.join(OUT_DIR, "map.json")
     async with aiofiles.open(images_map_path, "w", encoding="utf-8") as f:
-        await f.write(json.dumps(mapping, indent=2, ensure_ascii=False))
+        await f.write(json.dumps(mapping, indent=2, ensure_ascii=False, sort_keys=True))
 
     root_map_path = os.path.join(ROOT, "map.json")
     async with aiofiles.open(root_map_path, "w", encoding="utf-8") as f:
-        await f.write(json.dumps(mapping, indent=2, ensure_ascii=False))
+        await f.write(json.dumps(mapping, indent=2, ensure_ascii=False, sort_keys=True))
 
     # Zip bundle
     zip_path = os.path.join(OUT_DIR, "images-1024.zip")
