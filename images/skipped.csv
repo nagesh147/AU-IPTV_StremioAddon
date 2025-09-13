@@ -1,4 +1,8 @@
 slug,id,source,reason,logo_url
+foxsportsnews-au,FoxSportsNews.au,a1x,http-403,https://watch.foxtel.com.au/app/imageHelper.php?id=256571:206:CHANNEL:IMAGE:png&w=400
+espn1-au,ESPN1.au,a1x,http-403,https://watch.foxtel.com.au/app/imageHelper.php?id=570991:206:CHANNEL:IMAGE:png&w=400
+espn2-au,ESPN2.au,a1x,http-403,https://watch.foxtel.com.au/app/imageHelper.php?id=570992:206:CHANNEL:IMAGE:png&w=400
+main-event-ufc-au,Main.Event.Ufc.au,a1x,http-403,https://watch.foxtel.com.au/app/imageHelper.php?id=16859930:206:CHANNEL:IMAGE:png&w=400
 fox-1uxrvw1,fox-1uxrvw1,extras-remote,http-403,https://watch.foxtel.com.au/app/imageHelper.php?id=256571:206:CHANNEL:IMAGE:png&w=400
 fox-11wj5xc,fox-11wj5xc,extras-remote,http-403,https://watch.foxtel.com.au/app/imageHelper.php?id=542982:206:CHANNEL:IMAGE:png&w=400
 fox-1uxrvv9,fox-1uxrvv9,extras-remote,http-403,https://watch.foxtel.com.au/app/imageHelper.php?id=542982:206:CHANNEL:IMAGE:png&w=400

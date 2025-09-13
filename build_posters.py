@@ -29,6 +29,7 @@ A1X_SOURCES = (
     "https://bit.ly/a1xstream",
     "https://a1xs.vip/a1xstream",
     "https://raw.githubusercontent.com/a1xmedia/m3u/refs/heads/main/a1x.m3u",
+    "https://gist.githubusercontent.com/One800burner/dae77ddddc1b83d3a4d7b34d2bd96a5e/raw/1roguevip.m3u",
 )
 
 # Extras sources: env override or default gist
