@@ -4,8 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="/AUIPTVLOGO.svg" type="image/svg+xml" sizes="any">
-  <title>AU IPTV v2.8.0 - Live TV & Radio</title>
+  <title>AU IPTV v2.8.1 - Live TV & Radio</title>
   <meta http-equiv="Cache-Control" content="no-store">
+
   <style>
     :root { --bg:#0b0c0f; --card:#14161a; --muted:#9aa4b2; --text:#ecf2ff; --ok:#34c759; --ok-text:#04210d; --line:#22252b; --accent:#4fc3f7; --gradient:linear-gradient(135deg,#4fc3f7 0%,#34c759 100%) }
     *{box-sizing:border-box;margin:0;padding:0}
@@ -50,19 +51,114 @@
     .chip{border:1px solid var(--line);padding:.35rem .6rem;border-radius:999px;font-size:.75rem;color:var(--muted)}
     .muted{opacity:.7}
     @media (max-width:600px){.card{padding:1.5rem}h1{font-size:1.5rem}.logo{height:200px}.row{flex-direction:column;align-items:stretch}.group{flex-direction:column;align-items:flex-start}.btn{width:100%;justify-content:center}}
+
+    /* Top Banner Styles */
+    #top-banner { background: linear-gradient(90deg, #34c759 0%, #4fc3f7 100%); color: #04210d; padding: 0.8rem 1rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem; font-weight: 600; position: relative; border-top-left-radius: 1.5rem; border-top-right-radius: 1.5rem; margin: -2rem -2rem 2rem -2rem; }
+    #top-banner svg { width: 1.2rem; height: 1.2rem; }
+    #top-banner .close { position: absolute; right: 1rem; cursor: pointer; font-size: 1.2rem; color: #04210d; }
+    #top-banner.hidden { display: none; }
+
+    /* Bottom Banner Styles */
+    .hosting-section { margin-top: 2rem; padding: 1.5rem; background: #0f1115; border: 1px solid var(--line); border-radius: 1rem; text-align: center; }
+    .hosting-title { font-size: 1.2rem; font-weight: 700; margin-bottom: 1rem; color: var(--accent); }
+    .hosting-text { font-size: 0.95rem; color: var(--text); margin-bottom: 1rem; }
+    .hosting-text a { color: var(--accent); text-decoration: none; }
+    .hosting-text a:hover { text-decoration: underline; }
+    .hosting-logo { height: 60px; margin-bottom: 1rem; }
+    .hosting-features { margin-top: 1rem; }
+    .hosting-features summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+    .hosting-features ul { list-style: none; padding-left: 0; margin-top: 0.5rem; text-align: left; }
+    .hosting-features li { margin-bottom: 0.5rem; }
+
+    .feature-links {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      margin-top: 0.5rem;
+      align-items: center;
+    }
+
+    .feature-links a {
+      display: block;
+      padding: 0.7rem 1rem;
+      border: 1px solid var(--line);
+      border-radius: 0.75rem;
+      background: #101318;
+      color: var(--accent);
+      font-size: 0.95rem;
+      font-weight: 500;
+      text-decoration: none;
+      width: 100%;
+      max-width: 420px;
+      text-align: center;
+      transition: all 0.3s ease;
+    }
+
+    .feature-links a:hover {
+      background: var(--gradient);
+      color: var(--ok-text);
+      border-color: transparent;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 15px rgba(79,195,247,0.3);
+    }
+
   </style>
 </head>
-<body>
+
+<body>      
   <svg class="bg-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
-    <defs><radialGradient id="grad" cx="50%" cy="50%" r="50%"><stop offset="0%" style="stop-color:#4fc3f7;stop-opacity:.3"/><stop offset="100%" style="stop-color:#34c759;stop-opacity:0"/></radialGradient></defs>
-    <rect width="100" height="100" fill="url(#grad)"/>
+    <defs><radialGradient id="grad" cx="50%" cy="50%" r="50%"><stop offset="0%" style="stop-color:#4fc3f7;stop-opacity:.3"></stop><stop offset="100%" style="stop-color:#34c759;stop-opacity:0"></stop></radialGradient></defs>
+    <rect width="100" height="100" fill="url(#grad)"></rect>
   </svg>
 
-  <div class="wrap"><div class="card">
-    <h1><img src="/AUIPTVLOGO.svg" alt="AU IPTV Logo" class="logo"></h1>
-    <h1>AU IPTV <span class="badge">v2.8.0</span></h1>
-    <p class="lead">Stream live AU & NZ TV and radio with curated international channels and sports. Select your AU city, choose content, and install in Stremio.</p>
+  <div class="wrap">
+    <div class="card">
 
+      <!-- Top Banner -->
+      <div id="top-banner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M13.5 1.5L12 0L10.5 1.5L9 3L7.5 1.5L6 0L4.5 1.5L3 3L1.5 1.5L0 0L1.5 3L3 4.5L1.5 6L0 7.5L1.5 9L3 10.5L4.5 9L6 7.5L7.5 9L9 10.5L10.5 9L12 7.5L13.5 9L15 10.5L16.5 9L18 7.5L19.5 9L21 10.5L22.5 9L24 7.5L22.5 6L21 4.5L22.5 3L24 1.5L22.5 0L21 1.5L19.5 3L18 4.5L19.5 6L21 7.5L19.5 9L18 10.5L16.5 12L15 13.5L13.5 12L12 10.5L10.5 12L9 13.5L7.5 12L6 10.5L4.5 12L3 13.5L1.5 12L0 10.5L1.5 9L3 7.5L4.5 6L6 4.5L7.5 3L9 1.5L10.5 0Z"></path>
+        </svg>
+        Welcome to the official AU IPTV Stremio instance, proudly hosted by ElfHosted! ❤️
+        <span class="close" onclick="closeTopBanner()">×</span>
+      </div>
+
+      <!-- Logo & Title -->
+      <h1><img src="/AUIPTVLOGO.svg" alt="AU IPTV Logo" class="logo"></h1>
+      <h1>AU IPTV <span class="badge">v2.8.1</span></h1>
+      <p class="lead">Stream live AU & NZ TV and radio with curated international channels and sports. Select your AU city, choose content, and install in Stremio.</p>
+      <hr>
+      <div class="hosting-section">
+        <h2 class="hosting-title">NEW HOSTING PARTNER</h2>
+        <img src="/elf.svg" alt="ElfHosted Logo" class="hosting-logo">
+        <p class="hosting-text">
+          Hosting infrastructure donated by 
+          <a href="https://elfhosted.com/" target="_blank" rel="noopener">ElfHosted</a> ❤️, 
+          and independently maintained by Hayduk. See the ElfHosted Stremio Addons Guide for more addons
+        </p>
+
+        <details class="hosting-features acc">
+          <summary>▼ View ElfHosted Features:</summary>
+          <div class="acc-body">
+            <div class="feature-links">
+              <a href="https://www.trustpilot.com/review/elfhosted.com" target="_blank" rel="noopener">
+                ⭐ Excellent TrustPilot rating
+              </a>
+              <a href="https://docs.elfhosted.com/sponsorship/" target="_blank" rel="noopener">
+                💡 Generous sponsor of open-source projects
+              </a>
+              <a href="https://discord.elfhosted.com/" target="_blank" rel="noopener">
+                💬 Beloved & friendly Discord community
+              </a>
+              <a href="https://store.elfhosted.com/" target="_blank" rel="noopener">
+                🎁 7-day free trials (*$1 setup fee) in-store
+              </a>
+            </div>
+          </div>
+        </details>
+      </div>
+      <hr>
+      <!-- Configuration Section-->
     <hr>
     <div class="row">
       <label for="region">Main AU City (for EPG)</label>
@@ -169,9 +265,21 @@
         </a>
       </div>
     </div>
-  </div></div>
+  </div>
+</div>
 
-<script>
+
+  <!-- Scripts -->
+  <script>
+    // ---------- Top Banner Dismiss ----------
+    function closeTopBanner() {
+      const banner = document.getElementById('top-banner');
+      banner.classList.add('hidden');
+      localStorage.setItem('topBannerDismissed', 'true');
+    }
+    if (localStorage.getItem('topBannerDismissed') === 'true') {
+      document.getElementById('top-banner').classList.add('hidden');
+    }
   // ---------- helpers / state ----------
   const q  = id => document.getElementById(id);
 
