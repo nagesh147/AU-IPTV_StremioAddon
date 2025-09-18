@@ -1,5 +1,6 @@
 /**
  * AU IPTV — v2.8.1 (EPG Background Load + Fast Catalog)
+ * - Now Powered By ELFHOSTED thanks funkypenguin
  * - AU/NZ live channels (i.mjh.nz)
  * - Curated packs (A1X) + multi-quality variants
  * - Dynamic "Additional Packs" from external M3U (Rogue VIP works as before)
