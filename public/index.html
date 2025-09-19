@@ -77,7 +77,6 @@
       margin-top: 0.5rem;
       align-items: center;
     }
-
     .feature-links a {
       display: block;
       padding: 0.7rem 1rem;
@@ -93,7 +92,6 @@
       text-align: center;
       transition: all 0.3s ease;
     }
-
     .feature-links a:hover {
       background: var(--gradient);
       color: var(--ok-text);
@@ -102,6 +100,7 @@
       box-shadow: 0 4px 15px rgba(79,195,247,0.3);
     }
 
+    .hint { word-break: break-all; overflow-wrap: break-word; white-space: normal; }
   </style>
 </head>
 
@@ -123,15 +122,18 @@
         <span class="close" onclick="closeTopBanner()">×</span>
       </div>
 
+      <!-- FunAPI Message -->
+      <div id="fun-message" class="hosting-section" style="margin-top: 1rem; padding: 1rem; background: linear-gradient(135deg, #4fc3f7 0%, #34c759 100%); color: #04210d; font-weight: 600; border-radius: 0.75rem; text-align: center; display: none;">
+        <p id="fun-text">Loading a nice vibe...</p>
+      </div>
+
       <!-- Logo & Title -->
       <h1><img src="/AUIPTVLOGO.svg" alt="AU IPTV Logo" class="logo"></h1>
-<<<<<<< HEAD
       <h1>AU IPTV <span class="badge">v2.8.1</span></h1>
-=======
-      <h1>AU IPTV <span class="badge">v2.8.0</span></h1>
->>>>>>> c75f50d497b4530fb505a073487689b250c562f3
       <p class="lead">Stream live AU & NZ TV and radio with curated international channels and sports. Select your AU city, choose content, and install in Stremio.</p>
       <hr>
+
+      <!-- Hosting Partner Section -->
       <div class="hosting-section">
         <h2 class="hosting-title">NEW HOSTING PARTNER</h2>
         <img src="/elf.svg" alt="ElfHosted Logo" class="hosting-logo">
@@ -145,137 +147,127 @@
           <summary>▼ View ElfHosted Features:</summary>
           <div class="acc-body">
             <div class="feature-links">
-              <a href="https://www.trustpilot.com/review/elfhosted.com" target="_blank" rel="noopener">
-                ⭐ Excellent TrustPilot rating
-              </a>
-              <a href="https://docs.elfhosted.com/sponsorship/" target="_blank" rel="noopener">
-                💡 Generous sponsor of open-source projects
-              </a>
-              <a href="https://discord.elfhosted.com/" target="_blank" rel="noopener">
-                💬 Beloved & friendly Discord community
-              </a>
-              <a href="https://store.elfhosted.com/" target="_blank" rel="noopener">
-                🎁 7-day free trials (*$1 setup fee) in-store
-              </a>
+              <a href="https://www.trustpilot.com/review/elfhosted.com" target="_blank" rel="noopener">⭐ Excellent TrustPilot rating</a>
+              <a href="https://docs.elfhosted.com/sponsorship/" target="_blank" rel="noopener">💡 Generous sponsor of open-source projects</a>
+              <a href="https://discord.elfhosted.com/" target="_blank" rel="noopener">💬 Beloved & friendly Discord community</a>
+              <a href="https://store.elfhosted.com/" target="_blank" rel="noopener">🎁 7-day free trials (*$1 setup fee) in-store</a>
             </div>
           </div>
         </details>
       </div>
       <hr>
-      <!-- Configuration Section-->
-    <hr>
-    <div class="row">
-      <label for="region">Main AU City (for EPG)</label>
-      <select id="region">
-        <option>Adelaide</option><option selected>Brisbane</option><option>Canberra</option><option>Darwin</option>
-        <option>Hobart</option><option>Melbourne</option><option>Perth</option><option>Sydney</option>
-      </select>
-    </div>
-
-    <div class="row group">
-      <label><span class="toggle"><input type="checkbox" id="allContent"><span class="slider"></span></span>All Content</label>
-    </div>
-
-    <div class="row group">
-      <span class="section-title">Australia</span>
-      <label><span class="toggle"><input type="checkbox" id="auTv" checked><span class="slider"></span></span>AU TV</label>
-      <label><span class="toggle"><input type="checkbox" id="radio" checked><span class="slider"></span></span>AU Radio</label>
-      <label><span class="toggle"><input type="checkbox" id="auSports"><span class="slider"></span></span>AU Sports</label>
-    </div>
-
-    <!-- NZ (closed by default) -->
-    <details class="acc" id="nzAcc">
-      <summary>New Zealand</summary>
-      <div class="acc-body group">
-        <label><span class="toggle"><input type="checkbox" id="nz"><span class="slider"></span></span>NZ TV</label>
-        <label><span class="toggle"><input type="checkbox" id="nzRadio"><span class="slider"></span></span>NZ Radio</label>
-        <label id="nzDefaultWrap" style="display:none"><span class="toggle"><input type="checkbox" id="nzDefault"><span class="slider"></span></span>Set NZ as default</label>
-        <label><span class="toggle"><input type="checkbox" id="nzSports"><span class="slider"></span></span>NZ Sports</label>
+      <div class="row">
+        <label for="region">Main AU City (for EPG)</label>
+        <select id="region">
+          <option>Adelaide</option><option selected>Brisbane</option><option>Canberra</option><option>Darwin</option>
+          <option>Hobart</option><option>Melbourne</option><option>Perth</option><option>Sydney</option>
+        </select>
       </div>
-    </details>
 
-    <!-- International curated -->
-    <details class="acc" id="intlAcc">
-      <summary>International (Curated)</summary>
-      <div class="acc-body">
-        <div class="group">
-          <span class="section-title">UK</span>
-          <label><span class="toggle"><input type="checkbox" id="ukTV"><span class="slider"></span></span>UK TV</label>
-          <label><span class="toggle"><input type="checkbox" id="ukSports"><span class="slider"></span></span>UK Sports</label>
-        </div>
-        <div class="group">
-          <span class="section-title">US</span>
-          <label><span class="toggle"><input type="checkbox" id="usTV"><span class="slider"></span></span>US TV</label>
-          <label><span class="toggle"><input type="checkbox" id="usSports"><span class="slider"></span></span>US Sports</label>
-        </div>
-        <div class="group">
-          <span class="section-title">Canada</span>
-          <label><span class="toggle"><input type="checkbox" id="caTV"><span class="slider"></span></span>CA TV</label>
-          <label><span class="toggle"><input type="checkbox" id="caSports"><span class="slider"></span></span>CA Sports</label>
-        </div>
-        <div class="group">
-          <span class="section-title">Other</span>
-          <label><span class="toggle"><input type="checkbox" id="epl"><span class="slider"></span></span>EPL</label>
-          <label><span class="toggle"><input type="checkbox" id="euSports"><span class="slider"></span></span>EU Sports</label>
-          <label><span class="toggle"><input type="checkbox" id="worldSports"><span class="slider"></span></span>World Sports</label>
-        </div>
+      <div class="row group">
+        <label><span class="toggle"><input type="checkbox" id="allContent"><span class="slider"></span></span>All Content</label>
       </div>
-    </details>
 
-    <!-- Additional Packs (dynamic) -->
-    <details class="acc" id="extrasAcc">
-      <summary>Additional Packs (Dynamic)</summary>
-      <div class="acc-body">
-        <div class="group">
-          <label><span class="toggle"><input type="checkbox" id="extras"><span class="slider"></span></span>Enable Additional Packs</label>
-          <div class="chips" id="extrasInfo"><span class="chip">Auto-populated</span><span class="chip">May not be reliable</span></div>
-        </div>
-        <div class="group" id="extrasGroups" style="margin-top:.5rem">
-          <span class="muted" id="extrasLoading">Loading…</span>
-        </div>
+      <div class="row group">
+        <span class="section-title">Australia</span>
+        <label><span class="toggle"><input type="checkbox" id="auTv" checked><span class="slider"></span></span>AU TV</label>
+        <label><span class="toggle"><input type="checkbox" id="radio" checked><span class="slider"></span></span>AU Radio</label>
+        <label><span class="toggle"><input type="checkbox" id="auSports"><span class="slider"></span></span>AU Sports</label>
       </div>
-    </details>
 
-    <div class="row">
-      <button id="open" class="btn btn-primary" aria-label="Open in Stremio Web">
-        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm3.7-9.3-4-4a1 1 0 0 0-1.4 0 1 1 0 0 0 0 1.4l3.3 3.3H9a1 1 0 0 0 0 2h6a1 1 0 0 0 .7-.3 1 1 0 0 0 0-1.4l-3.3-3.3z"/></svg>
-        Open in Stremio
-      </button>
-      <a id="manifestLink" class="btn btn-ghost" href="#" target="_blank" rel="noopener" aria-label="Open manifest.json">View Manifest</a>
-      <button id="copy" class="btn" aria-label="Copy manifest URL">
-        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>
-        Copy URL
-      </button>
-    </div>
+      <!-- NZ (closed by default) -->
+      <details class="acc" id="nzAcc">
+        <summary>New Zealand</summary>
+        <div class="acc-body group">
+          <label><span class="toggle"><input type="checkbox" id="nz"><span class="slider"></span></span>NZ TV</label>
+          <label><span class="toggle"><input type="checkbox" id="nzRadio"><span class="slider"></span></span>NZ Radio</label>
+          <label id="nzDefaultWrap" style="display:none"><span class="toggle"><input type="checkbox" id="nzDefault"><span class="slider"></span></span>Set NZ as default</label>
+          <label><span class="toggle"><input type="checkbox" id="nzSports"><span class="slider"></span></span>NZ Sports</label>
+        </div>
+      </details>
 
-    <code id="preview">—</code>
-    <div class="hint">Web installer: <span id="weburl">—</span></div>
+      <!-- International curated -->
+      <details class="acc" id="intlAcc">
+        <summary>International (Curated)</summary>
+        <div class="acc-body">
+          <div class="group">
+            <span class="section-title">UK</span>
+            <label><span class="toggle"><input type="checkbox" id="ukTV"><span class="slider"></span></span>UK TV</label>
+            <label><span class="toggle"><input type="checkbox" id="ukSports"><span class="slider"></span></span>UK Sports</label>
+          </div>
+          <div class="group">
+            <span class="section-title">US</span>
+            <label><span class="toggle"><input type="checkbox" id="usTV"><span class="slider"></span></span>US TV</label>
+            <label><span class="toggle"><input type="checkbox" id="usSports"><span class="slider"></span></span>US Sports</label>
+          </div>
+          <div class="group">
+            <span class="section-title">Canada</span>
+            <label><span class="toggle"><input type="checkbox" id="caTV"><span class="slider"></span></span>CA TV</label>
+            <label><span class="toggle"><input type="checkbox" id="caSports"><span class="slider"></span></span>CA Sports</label>
+          </div>
+          <div class="group">
+            <span class="section-title">Other</span>
+            <label><span class="toggle"><input type="checkbox" id="epl"><span class="slider"></span></span>EPL</label>
+            <label><span class="toggle"><input type="checkbox" id="euSports"><span class="slider"></span></span>EU Sports</label>
+            <label><span class="toggle"><input type="checkbox" id="worldSports"><span class="slider"></span></span>World Sports</label>
+          </div>
+        </div>
+      </details>
 
-    <hr>
-    <div class="row" style="justify-content:space-between;align-items:center">
-      <div class="hint">Enjoying AU IPTV? Support its development!</div>
-      <div class="group">
-        <a class="btn" href="https://ko-fi.com/joshargh" target="_blank" rel="noopener" aria-label="Support on Ko-fi">
-          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 5c-.55 0-1 .45-1 1v8a4 4 0 0 0 4 4h7.5a6.5 6.5 0 0 0 0-13H3zm10.5 2H4v7a2 2 0 0 0 2 2h7.5a4.5 4.5 0 0 0 0-9zM8.5 9a2.5 2.5 0 0 1 2.1 3.8l-.1.16l-.33.44l-1.67 2.1l-1.67-2.1l-.33-.44A2.5 2.5 0 0 1 8.5 9z"/></svg>
-          Ko-fi
-        </a>
-        <a class="btn" href="https://buymeacoffee.com/joshargh" target="_blank" rel="noopener" aria-label="Buy Me a Coffee">
-          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M5 4h11a2 2 0 0 1 2 2l-1 9a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5L3 6a2 2 0 0 1 2-2m12 2H5l1 9a3 3 0 0 0 3 3h3a3 3 0 0 0 3-3zM6 7h10v2H6z"/></svg>
-          Buy Me a Coffee
-        </a>
-        <a class="btn" href="https://paypal.me/joshargh" target="_blank" rel="noopener" aria-label="Donate via PayPal">
-          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7.8 20H5.5a1 1 0 0 1-1-.86L3 5.86A1 1 0 0 1 3.99 5H13c3.4 0 5.8 1.64 5.8 4.68c0 3.4-2.72 5.32-6.3 5.32h-2.4l-.6 5zm7-13H6.2l1.02 9H13c2.68 0 4.3-1.2 4.3-3.32S16.58 7 14.8 7z"/></svg>
-          PayPal
-        </a>
+      <!-- Additional Packs (dynamic) -->
+      <details class="acc" id="extrasAcc">
+        <summary>Additional Packs (Dynamic)</summary>
+        <div class="acc-body">
+          <div class="group">
+            <label><span class="toggle"><input type="checkbox" id="extras"><span class="slider"></span></span>Enable Additional Packs</label>
+            <div class="chips" id="extrasInfo"><span class="chip">Auto-populated</span><span class="chip">May not be reliable</span></div>
+          </div>
+          <div class="group" id="extrasGroups" style="margin-top:.5rem">
+            <span class="muted" id="extrasLoading">Loading…</span>
+          </div>
+        </div>
+      </details>
+
+      <div class="row">
+        <button id="open" class="btn btn-primary" aria-label="Open in Stremio Web">
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm3.7-9.3-4-4a1 1 0 0 0-1.4 0 1 1 0 0 0 0 1.4l3.3 3.3H9a1 1 0 0 0 0 2h6a1 1 0 0 0 .7-.3 1 1 0 0 0 0-1.4l-3.3-3.3z"/></svg>
+          Open in Stremio
+        </button>
+        <a id="manifestLink" class="btn btn-ghost" href="#" target="_blank" rel="noopener" aria-label="Open manifest.json">View Manifest</a>
+        <button id="copy" class="btn" aria-label="Copy manifest URL">
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>
+          Copy URL
+        </button>
+      </div>
+
+      <code id="preview">—</code>
+      <div class="hint">Web installer: <span id="weburl">—</span></div>
+
+      <hr>
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div class="hint">Enjoying AU IPTV? Support its development!</div>
+        <div class="group">
+          <a class="btn" href="https://ko-fi.com/joshargh" target="_blank" rel="noopener" aria-label="Support on Ko-fi">
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 5c-.55 0-1 .45-1 1v8a4 4 0 0 0 4 4h7.5a6.5 6.5 0 0 0 0-13H3zm10.5 2H4v7a2 2 0 0 0 2 2h7.5a4.5 4.5 0 0 0 0-9zM8.5 9a2.5 2.5 0 0 1 2.1 3.8l-.1.16l-.33.44l-1.67 2.1l-1.67-2.1l-.33-.44A2.5 2.5 0 0 1 8.5 9z"/></svg>
+            Ko-fi
+          </a>
+          <a class="btn" href="https://buymeacoffee.com/joshargh" target="_blank" rel="noopener" aria-label="Buy Me a Coffee">
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M5 4h11a2 2 0 0 1 2 2l-1 9a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5L3 6a2 2 0 0 1 2-2m12 2H5l1 9a3 3 0 0 0 3 3h3a3 3 0 0 0 3-3zM6 7h10v2H6z"/></svg>
+            Buy Me a Coffee
+          </a>
+          <a class="btn" href="https://paypal.me/joshargh" target="_blank" rel="noopener" aria-label="Donate via PayPal">
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7.8 20H5.5a1 1 0 0 1-1-.86L3 5.86A1 1 0 0 1 3.99 5H13c3.4 0 5.8 1.64 5.8 4.68c0 3.4-2.72 5.32-6.3 5.32h-2.4l-.6 5zm7-13H6.2l1.02 9H13c2.68 0 4.3-1.2 4.3-3.32S16.58 7 14.8 7z"/></svg>
+            PayPal
+          </a>
+        </div>
       </div>
     </div>
   </div>
-</div>
 
 
   <!-- Scripts -->
-  <script>
-    // ---------- Top Banner Dismiss ----------
+<script>
+    // ---------- Top Banner ----------
     function closeTopBanner() {
       const banner = document.getElementById('top-banner');
       banner.classList.add('hidden');
@@ -284,207 +276,28 @@
     if (localStorage.getItem('topBannerDismissed') === 'true') {
       document.getElementById('top-banner').classList.add('hidden');
     }
-  // ---------- helpers / state ----------
-  const q  = id => document.getElementById(id);
 
-  // static toggles
-  const STATIC_BOXES = ['auTv','radio','auSports','nz','nzRadio','nzSports','ukTV','ukSports','usTV','usSports','caTV','caSports','epl','euSports','worldSports'];
+    // ---------- FunAPI Message ----------
+    async function loadFunMessage() {
+      const funDiv = document.getElementById('fun-message');
+      const funText = document.getElementById('fun-text');
 
-  // dynamic extras
-  let EXTRA_GROUP_IDS = []; // will be like ['exgrp-sports','exgrp-news', ...]
-  const EXTRAS_CONTAINER = q('extrasGroups');
-  const EXTRAS_LOADING = q('extrasLoading');
+      try {
+        const r = await fetch('https://my-fun-api.onrender.com/compliment');
+        const data = await r.json();
+        console.log('FunAPI response:', data);
 
-  const NZ_BOXES  = ['nz','nzRadio','nzSports'];
-  const INTL_BOXES = ['ukTV','ukSports','usTV','usSports','caTV','caSports','epl','euSports','worldSports'];
+        funText.textContent =
+          data.compliment || data.fortune || data.pizza || data.truth || data.thought || 'Enjoy your day! ❤️';
 
-  let BULK = false;
-
-  const allBoxes = () => {
-    return [...STATIC_BOXES, 'extras', ...EXTRA_GROUP_IDS];
-  };
-
-  // ---------- URL builders ----------
-  function region() {
-    const raw = (q('region').value || 'Brisbane').trim();
-    return encodeURIComponent(raw);
-  }
-  function pathPrefix() {
-    const parts = [region()];
-    if (!q('auTv').checked) parts.push('noau');
-    if (q('radio').checked) parts.push('radio');
-    if (q('auSports').checked) parts.push('ausports');
-    if (q('nz').checked) parts.push('nz');
-    if (q('nzRadio').checked) parts.push('nzradio');
-    if (q('nzDefault').checked) parts.push('nzdefault');
-    if (q('nzSports').checked) parts.push('nzsports');
-    if (q('ukTV').checked) parts.push('uktv');
-    if (q('ukSports').checked) parts.push('uksports');
-    if (q('usTV').checked) parts.push('ustv');
-    if (q('usSports').checked) parts.push('ussports');
-    if (q('caTV').checked) parts.push('catv');
-    if (q('caSports').checked) parts.push('casports');
-    if (q('euSports').checked) parts.push('eusports');
-    if (q('worldSports').checked) parts.push('worldsports');
-    if (q('epl').checked) parts.push('epl');
-
-    // extras flags
-    if (q('extras').checked) {
-      parts.push('extras');
-      EXTRA_GROUP_IDS.forEach(id => {
-        const el = q(id);
-        if (el && el.checked) parts.push(id); // already "exgrp-<slug>"
-      });
-    }
-    return '/' + parts.join('/');
-  }
-  function webInstall(u) { return 'https://web.stremio.com/#/addons?addon=' + encodeURIComponent(u); }
-
-  // ---------- UI sync ----------
-  function syncAllToggle() {
-    if (BULK) return;
-    q('allContent').checked = allBoxes().every(id => q(id)?.checked || id.startsWith('exgrp-') && !q('extras').checked);
-  }
-
-  function setAllContent(checked) {
-    BULK = true;
-    if (checked) {
-      [...STATIC_BOXES, 'extras', ...EXTRA_GROUP_IDS].forEach(id => { const el = q(id); if (el) el.checked = true; });
-      q('nzDefault').checked = false;
-      q('nzAcc').open = true;
-      q('intlAcc').open = true;
-      q('extrasAcc').open = true;
-    } else {
-      [...NZ_BOXES, ...INTL_BOXES].forEach(id => { const el = q(id); if (el) el.checked = false; });
-      q('nzDefault').checked = false;
-      // extras off
-      const ex = q('extras'); if (ex) ex.checked = false;
-      EXTRA_GROUP_IDS.forEach(id => { const el = q(id); if (el) el.checked = false; });
-      q('nzAcc').open = false;
-      q('intlAcc').open = false;
-      q('extrasAcc').open = false;
-    }
-    BULK = false;
-    update();
-  }
-
-  function updateExtrasUI() {
-    const enabled = q('extras').checked;
-    EXTRA_GROUP_IDS.forEach(id => {
-      const el = q(id);
-      if (el) el.disabled = !enabled;
-    });
-  }
-
-  function update() {
-    q('nzDefaultWrap').style.display = q('nz').checked ? 'inline-block' : 'none';
-    if (!q('nz').checked) q('nzDefault').checked = false;
-
-    updateExtrasUI();
-    syncAllToggle();
-
-    const m = location.origin + pathPrefix() + '/manifest.json';
-    q('preview').textContent = m;
-    q('weburl').textContent = webInstall(m);
-    q('manifestLink').href = m;
-  }
-
-  // ---------- dynamic extras loader ----------
-  async function loadExtras() {
-    try {
-      const r = await fetch('/extras/groups', { cache: 'no-store' });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const data = await r.json();
-      const groups = Array.isArray(data.groups) ? data.groups : [];
-
-      EXTRAS_CONTAINER.innerHTML = '';
-      if (!groups.length) {
-        EXTRAS_CONTAINER.innerHTML = '<span class="muted">No additional packs available right now.</span>';
-        return;
+        funDiv.style.display = 'block';
+      } catch (e) {
+        console.error('FunAPI failed:', e);
+        funText.textContent = 'Spreading good vibes! ❤️';
+        funDiv.style.display = 'block';
       }
-
-      EXTRA_GROUP_IDS = groups.map(g => `exgrp-${g.slug}`);
-
-      for (const g of groups) {
-        const id = `exgrp-${g.slug}`;
-        const wrap = document.createElement('label');
-        wrap.innerHTML = `
-          <span class="toggle">
-            <input type="checkbox" id="${id}" disabled>
-            <span class="slider"></span>
-          </span>
-          ${g.name} <span class="chip" style="margin-left:.4rem">${g.count}</span>
-        `;
-        EXTRAS_CONTAINER.appendChild(wrap);
-      }
-
-      // wire up change listeners for the new toggles
-      EXTRA_GROUP_IDS.forEach(id => {
-        const el = q(id);
-        if (el) el.addEventListener('change', () => update());
-      });
-
-      // with groups loaded, resync All Content and URL
-      update();
-    } catch (e) {
-      EXTRAS_CONTAINER.innerHTML = '<span class="muted">Couldn’t load packs.</span>';
-    } finally {
-      if (EXTRAS_LOADING) EXTRAS_LOADING.remove();
     }
-  }
-
-  // ---------- events ----------
-  q('allContent').addEventListener('change', () => setAllContent(q('allContent').checked));
-
-  ['change','input'].forEach(ev => {
-    document.addEventListener(ev, (e) => {
-      if (!e.target?.id) return;
-      if (e.target.id === 'allContent') return;
-      if (BULK) return;
-      syncAllToggle();
-      update();
-    });
-  });
-
-  q('extras').addEventListener('change', () => {
-    // enable/disable per-group, and open the accordion when enabling
-    if (q('extras').checked) q('extrasAcc').open = true;
-    update();
-  });
-
-  // open link/copy actions
-  async function copyToClipboard(text) {
-    try { await navigator.clipboard.writeText(text); }
-    catch {
-      const ta = document.createElement('textarea');
-      ta.value = text; ta.setAttribute('readonly',''); ta.style.position='absolute'; ta.style.left='-9999px';
-      document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch {}
-      document.body.removeChild(ta);
-    }
-  }
-  q('open').addEventListener('click', async () => {
-    update(); const m = location.origin + pathPrefix() + '/manifest.json';
-    await copyToClipboard(m); window.open(webInstall(m), '_blank', 'noopener,noreferrer');
-  });
-  q('manifestLink').addEventListener('click', async (e) => {
-    e.preventDefault(); update(); const m = location.origin + pathPrefix() + '/manifest.json';
-    await copyToClipboard(m); window.open(m, '_blank', 'noopener,noreferrer');
-  });
-  q('copy').addEventListener('click', async () => {
-    update(); const m = location.origin + pathPrefix() + '/manifest.json';
-    await copyToClipboard(m); const btn = q('copy'); const t = btn.textContent; btn.textContent = 'Copied!'; setTimeout(()=>btn.textContent=t,1200);
-  });
-
-  // ---------- initial state ----------
-  q('allContent').checked = false;
-  q('nzAcc').open = false;
-  q('intlAcc').open = false;
-  q('extrasAcc').open = false;
-  q('nzDefault').checked = false;
-
-  loadExtras(); // populate dynamic packs
-  update();
-</script>
-
+    loadFunMessage();
+  </script>
 </body>
 </html>
