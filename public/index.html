@@ -77,6 +77,7 @@
       margin-top: 0.5rem;
       align-items: center;
     }
+
     .feature-links a {
       display: block;
       padding: 0.7rem 1rem;
@@ -92,6 +93,7 @@
       text-align: center;
       transition: all 0.3s ease;
     }
+
     .feature-links a:hover {
       background: var(--gradient);
       color: var(--ok-text);
@@ -100,7 +102,12 @@
       box-shadow: 0 4px 15px rgba(79,195,247,0.3);
     }
 
-    .hint { word-break: break-all; overflow-wrap: break-word; white-space: normal; }
+    .hint {
+      word-break: break-all; /* Breaks long words/URLs at any point */
+      overflow-wrap: break-word; /* Alternative for better hyphenation if needed */
+      white-space: normal; /* Ensures wrapping is allowed */
+    }
+
   </style>
 </head>
 
@@ -122,7 +129,7 @@
         <span class="close" onclick="closeTopBanner()">×</span>
       </div>
 
-      <!-- FunAPI Message -->
+      <!-- New Fun Message Section (just below banner, above logo) -->
       <div id="fun-message" class="hosting-section" style="margin-top: 1rem; padding: 1rem; background: linear-gradient(135deg, #4fc3f7 0%, #34c759 100%); color: #04210d; font-weight: 600; border-radius: 0.75rem; text-align: center; display: none;">
         <p id="fun-text">Loading a nice vibe...</p>
       </div>
@@ -132,8 +139,6 @@
       <h1>AU IPTV <span class="badge">v2.8.1</span></h1>
       <p class="lead">Stream live AU & NZ TV and radio with curated international channels and sports. Select your AU city, choose content, and install in Stremio.</p>
       <hr>
-
-      <!-- Hosting Partner Section -->
       <div class="hosting-section">
         <h2 class="hosting-title">NEW HOSTING PARTNER</h2>
         <img src="/elf.svg" alt="ElfHosted Logo" class="hosting-logo">
@@ -147,10 +152,18 @@
           <summary>▼ View ElfHosted Features:</summary>
           <div class="acc-body">
             <div class="feature-links">
-              <a href="https://www.trustpilot.com/review/elfhosted.com" target="_blank" rel="noopener">⭐ Excellent TrustPilot rating</a>
-              <a href="https://docs.elfhosted.com/sponsorship/" target="_blank" rel="noopener">💡 Generous sponsor of open-source projects</a>
-              <a href="https://discord.elfhosted.com/" target="_blank" rel="noopener">💬 Beloved & friendly Discord community</a>
-              <a href="https://store.elfhosted.com/" target="_blank" rel="noopener">🎁 7-day free trials (*$1 setup fee) in-store</a>
+              <a href="https://www.trustpilot.com/review/elfhosted.com" target="_blank" rel="noopener">
+                ⭐ Excellent TrustPilot rating
+              </a>
+              <a href="https://docs.elfhosted.com/sponsorship/" target="_blank" rel="noopener">
+                💡 Generous sponsor of open-source projects
+              </a>
+              <a href="https://discord.elfhosted.com/" target="_blank" rel="noopener">
+                💬 Beloved & friendly Discord community
+              </a>
+              <a href="https://store.elfhosted.com/" target="_blank" rel="noopener">
+                🎁 7-day free trials (*$1 setup fee) in-store
+              </a>
             </div>
           </div>
         </details>
@@ -266,8 +279,8 @@
 
 
   <!-- Scripts -->
-<script>
-    // ---------- Top Banner ----------
+  <script>
+    // ---------- Top Banner Dismiss ----------
     function closeTopBanner() {
       const banner = document.getElementById('top-banner');
       banner.classList.add('hidden');
@@ -276,28 +289,244 @@
     if (localStorage.getItem('topBannerDismissed') === 'true') {
       document.getElementById('top-banner').classList.add('hidden');
     }
+  // ---------- helpers / state ----------
+  const q  = id => document.getElementById(id);
 
-    // ---------- FunAPI Message ----------
-    async function loadFunMessage() {
-      const funDiv = document.getElementById('fun-message');
-      const funText = document.getElementById('fun-text');
+  // static toggles
+  const STATIC_BOXES = ['auTv','radio','auSports','nz','nzRadio','nzSports','ukTV','ukSports','usTV','usSports','caTV','caSports','epl','euSports','worldSports'];
 
-      try {
-        const r = await fetch('https://my-fun-api.onrender.com/compliment');
-        const data = await r.json();
-        console.log('FunAPI response:', data);
+  // dynamic extras
+  let EXTRA_GROUP_IDS = []; // will be like ['exgrp-sports','exgrp-news', ...]
+  const EXTRAS_CONTAINER = q('extrasGroups');
+  const EXTRAS_LOADING = q('extrasLoading');
 
+  const NZ_BOXES  = ['nz','nzRadio','nzSports'];
+  const INTL_BOXES = ['ukTV','ukSports','usTV','usSports','caTV','caSports','epl','euSports','worldSports'];
+
+  let BULK = false;
+
+  const allBoxes = () => {
+    return [...STATIC_BOXES, 'extras', ...EXTRA_GROUP_IDS];
+  };
+
+  // ---------- URL builders ----------
+  function region() {
+    const raw = (q('region').value || 'Brisbane').trim();
+    return encodeURIComponent(raw);
+  }
+  function pathPrefix() {
+    const parts = [region()];
+    if (!q('auTv').checked) parts.push('noau');
+    if (q('radio').checked) parts.push('radio');
+    if (q('auSports').checked) parts.push('ausports');
+    if (q('nz').checked) parts.push('nz');
+    if (q('nzRadio').checked) parts.push('nzradio');
+    if (q('nzDefault').checked) parts.push('nzdefault');
+    if (q('nzSports').checked) parts.push('nzsports');
+    if (q('ukTV').checked) parts.push('uktv');
+    if (q('ukSports').checked) parts.push('uksports');
+    if (q('usTV').checked) parts.push('ustv');
+    if (q('usSports').checked) parts.push('ussports');
+    if (q('caTV').checked) parts.push('catv');
+    if (q('caSports').checked) parts.push('casports');
+    if (q('euSports').checked) parts.push('eusports');
+    if (q('worldSports').checked) parts.push('worldsports');
+    if (q('epl').checked) parts.push('epl');
+
+    // extras flags
+    if (q('extras').checked) {
+      parts.push('extras');
+      EXTRA_GROUP_IDS.forEach(id => {
+        const el = q(id);
+        if (el && el.checked) parts.push(id); // already "exgrp-<slug>"
+      });
+    }
+    return '/' + parts.join('/');
+  }
+  function webInstall(u) { return 'https://web.stremio.com/#/addons?addon=' + encodeURIComponent(u); }
+
+  // ---------- UI sync ----------
+  function syncAllToggle() {
+    if (BULK) return;
+    q('allContent').checked = allBoxes().every(id => q(id)?.checked || id.startsWith('exgrp-') && !q('extras').checked);
+  }
+
+  function setAllContent(checked) {
+    BULK = true;
+    if (checked) {
+      [...STATIC_BOXES, 'extras', ...EXTRA_GROUP_IDS].forEach(id => { const el = q(id); if (el) el.checked = true; });
+      q('nzDefault').checked = false;
+      q('nzAcc').open = true;
+      q('intlAcc').open = true;
+      q('extrasAcc').open = true;
+    } else {
+      [...NZ_BOXES, ...INTL_BOXES].forEach(id => { const el = q(id); if (el) el.checked = false; });
+      q('nzDefault').checked = false;
+      // extras off
+      const ex = q('extras'); if (ex) ex.checked = false;
+      EXTRA_GROUP_IDS.forEach(id => { const el = q(id); if (el) el.checked = false; });
+      q('nzAcc').open = false;
+      q('intlAcc').open = false;
+      q('extrasAcc').open = false;
+    }
+    BULK = false;
+    update();
+  }
+
+  function updateExtrasUI() {
+    const enabled = q('extras').checked;
+    EXTRA_GROUP_IDS.forEach(id => {
+      const el = q(id);
+      if (el) el.disabled = !enabled;
+    });
+  }
+
+  function update() {
+    q('nzDefaultWrap').style.display = q('nz').checked ? 'inline-block' : 'none';
+    if (!q('nz').checked) q('nzDefault').checked = false;
+
+    updateExtrasUI();
+    syncAllToggle();
+
+    const m = location.origin + pathPrefix() + '/manifest.json';
+    q('preview').textContent = m;
+    q('weburl').textContent = webInstall(m);
+    q('manifestLink').href = m;
+  }
+
+  // ---------- dynamic extras loader ----------
+  async function loadExtras() {
+    try {
+      const r = await fetch('/extras/groups', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      const groups = Array.isArray(data.groups) ? data.groups : [];
+
+      EXTRAS_CONTAINER.innerHTML = '';
+      if (!groups.length) {
+        EXTRAS_CONTAINER.innerHTML = '<span class="muted">No additional packs available right now.</span>';
+        return;
+      }
+
+      EXTRA_GROUP_IDS = groups.map(g => `exgrp-${g.slug}`);
+
+      for (const g of groups) {
+        const id = `exgrp-${g.slug}`;
+        const wrap = document.createElement('label');
+        wrap.innerHTML = `
+          <span class="toggle">
+            <input type="checkbox" id="${id}" disabled>
+            <span class="slider"></span>
+          </span>
+          ${g.name} <span class="chip" style="margin-left:.4rem">${g.count}</span>
+        `;
+        EXTRAS_CONTAINER.appendChild(wrap);
+      }
+
+      // wire up change listeners for the new toggles
+      EXTRA_GROUP_IDS.forEach(id => {
+        const el = q(id);
+        if (el) el.addEventListener('change', () => update());
+      });
+
+      // with groups loaded, resync All Content and URL
+      update();
+    } catch (e) {
+      EXTRAS_CONTAINER.innerHTML = '<span class="muted">Couldn’t load packs.</span>';
+    } finally {
+      if (EXTRAS_LOADING) EXTRAS_LOADING.remove();
+    }
+  }
+
+  // ---------- events ----------
+  q('allContent').addEventListener('change', () => setAllContent(q('allContent').checked));
+
+  ['change','input'].forEach(ev => {
+    document.addEventListener(ev, (e) => {
+      if (!e.target?.id) return;
+      if (e.target.id === 'allContent') return;
+      if (BULK) return;
+      syncAllToggle();
+      update();
+    });
+  });
+
+  q('extras').addEventListener('change', () => {
+    // enable/disable per-group, and open the accordion when enabling
+    if (q('extras').checked) q('extrasAcc').open = true;
+    update();
+  });
+
+  // open link/copy actions
+  async function copyToClipboard(text) {
+    try { await navigator.clipboard.writeText(text); }
+    catch {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.setAttribute('readonly',''); ta.style.position='absolute'; ta.style.left='-9999px';
+      document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch {}
+      document.body.removeChild(ta);
+    }
+  }
+  q('open').addEventListener('click', async () => {
+    update(); const m = location.origin + pathPrefix() + '/manifest.json';
+    await copyToClipboard(m); window.open(webInstall(m), '_blank', 'noopener,noreferrer');
+  });
+  q('manifestLink').addEventListener('click', async (e) => {
+    e.preventDefault(); update(); const m = location.origin + pathPrefix() + '/manifest.json';
+    await copyToClipboard(m); window.open(m, '_blank', 'noopener,noreferrer');
+  });
+  q('copy').addEventListener('click', async () => {
+    update(); const m = location.origin + pathPrefix() + '/manifest.json';
+    await copyToClipboard(m); const btn = q('copy'); const t = btn.textContent; btn.textContent = 'Copied!'; setTimeout(()=>btn.textContent=t,1200);
+  });
+
+  // ---------- initial state ----------
+  q('allContent').checked = false;
+  q('nzAcc').open = false;
+  q('intlAcc').open = false;
+  q('extrasAcc').open = false;
+  q('nzDefault').checked = false;
+
+  loadExtras(); // populate dynamic packs
+  update();
+
+  // ---------- Fetch Fun Message from FunAPI ----------//!
+  async function loadFunMessage() {
+    const funDiv = document.getElementById('fun-message');
+    const funText = document.getElementById('fun-text');
+
+    // FunAPI v1.0 server
+    const apiBase = 'https://my-fun-api.onrender.com';
+
+    // Pick any endpoint: /compliment /fortune /pizza /truth /thought
+    const endpoint = '/compliment';
+
+    try {
+      const response = await fetch(`${apiBase}${endpoint}`, { cache: 'no-store' });
+      if (!response.ok) throw new Error('API error');
+
+      const data = await response.json();
+      if (data.success && data.data) {
+        // Pick correct key based on endpoint
         funText.textContent =
-          data.compliment || data.fortune || data.pizza || data.truth || data.thought || 'Enjoy your day! ❤️';
+          data.data.compliment ||
+          data.data.fortune ||
+          data.data.pizza ||
+          data.data.truth ||
+          data.data.thought ||
+          'Enjoy your day! ❤️';
 
-        funDiv.style.display = 'block';
-      } catch (e) {
-        console.error('FunAPI failed:', e);
-        funText.textContent = 'Spreading good vibes! ❤️';
         funDiv.style.display = 'block';
       }
+    } catch (e) {
+      console.error('Failed to load fun message:', e);
+      funText.textContent = 'Spreading good vibes! ❤️';
+      funDiv.style.display = 'block';
     }
-    loadFunMessage();
-  </script>
+  }
+
+  // Call it on page load
+  loadFunMessage();
+</script>
 </body>
 </html>
