@@ -491,21 +491,39 @@
   update();
 
 // ---------- Fetch Fun Message via your proxy ----------
+let funIndex = parseInt(localStorage.getItem('funIndex') || '0', 10);
+
 async function loadFunMessage() {
   const funDiv = document.getElementById('fun-message');
   const funText = document.getElementById('fun-text');
 
+  const endpoints = [
+    '/fun/compliment',
+    '/fun/fortune',
+    '/fun/funfact',
+    '/fun/lifetruth',
+    '/fun/pizzaidea',
+    '/fun/thought'
+  ];
+
+  const ep = endpoints[funIndex % endpoints.length];
+  funIndex++;
+  localStorage.setItem('funIndex', funIndex);
+
   try {
-    const response = await fetch('/fun/compliment', { cache: 'no-store' });
+    const response = await fetch(ep, { cache: 'no-store' });
     if (!response.ok) throw new Error('API error');
 
     const data = await response.json();
+    const d = data.data || {};
+
     funText.textContent =
-      data.compliment ||
-      data.fortune ||
-      data.pizza ||
-      data.truth ||
-      data.thought ||
+      d.compliment ||
+      d.fortune ||
+      d.fun_fact ||
+      d.life_truth ||
+      d.pizza_idea ||
+      d.thought ||
       'Enjoy your day! ❤️';
 
     funDiv.style.display = 'block';
@@ -515,6 +533,8 @@ async function loadFunMessage() {
     funDiv.style.display = 'block';
   }
 }
+
+
 
 
 
