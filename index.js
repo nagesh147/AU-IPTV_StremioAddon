@@ -1952,6 +1952,7 @@ app.get('/extras/groups', async (_req, res) => {
   }
 });
 
+
 // Helper base URL
 function baseUrl(req) {
   const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
@@ -1974,6 +1975,25 @@ function buildGenresFromFlags(region, flags, extrasList = []) {
   for (const g of extrasList) opts.push(`Extra: ${g.name}`);
   return opts;
 }
+
+// ---------------- FunAPI Proxy ----------------
+app.get('/fun/:type', async (req, res) => {
+  try {
+    const type = req.params.type || 'compliment';
+    const url = `https://my-fun-api.onrender.com/${encodeURIComponent(type)}`;
+
+    const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!r.ok) throw new Error(`Upstream error: ${r.status}`);
+
+    const data = await r.json();
+    res.set('Access-Control-Allow-Origin', '*'); // allow browser calls
+    res.json(data);
+  } catch (e) {
+    console.error('[FunAPI proxy error]', e);
+    res.status(500).json({ error: 'FunAPI proxy failed' });
+  }
+});
+
 
 app.get(/^\/[^^/]+(?:\/[^/]+)*\/manifest\.json$/, async (req, res) => {
   try {

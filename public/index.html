@@ -490,40 +490,33 @@
   loadExtras(); // populate dynamic packs
   update();
 
-  // ---------- Fetch Fun Message from FunAPI ----------//!
-  async function loadFunMessage() {
-    const funDiv = document.getElementById('fun-message');
-    const funText = document.getElementById('fun-text');
+// ---------- Fetch Fun Message via your proxy ----------
+async function loadFunMessage() {
+  const funDiv = document.getElementById('fun-message');
+  const funText = document.getElementById('fun-text');
 
-    // FunAPI v1.0 server
-    const apiBase = 'https://my-fun-api.onrender.com';
+  try {
+    const response = await fetch('/fun/compliment', { cache: 'no-store' });
+    if (!response.ok) throw new Error('API error');
 
-    // Pick any endpoint: /compliment /fortune /pizza /truth /thought
-    const endpoint = '/compliment';
+    const data = await response.json();
+    funText.textContent =
+      data.compliment ||
+      data.fortune ||
+      data.pizza ||
+      data.truth ||
+      data.thought ||
+      'Enjoy your day! ❤️';
 
-    try {
-      const response = await fetch(`${apiBase}${endpoint}`, { cache: 'no-store' });
-      if (!response.ok) throw new Error('API error');
-
-      const data = await response.json();
-      if (data.success && data.data) {
-        // Pick correct key based on endpoint
-        funText.textContent =
-          data.data.compliment ||
-          data.data.fortune ||
-          data.data.pizza ||
-          data.data.truth ||
-          data.data.thought ||
-          'Enjoy your day! ❤️';
-
-        funDiv.style.display = 'block';
-      }
-    } catch (e) {
-      console.error('Failed to load fun message:', e);
-      funText.textContent = 'Spreading good vibes! ❤️';
-      funDiv.style.display = 'block';
-    }
+    funDiv.style.display = 'block';
+  } catch (e) {
+    console.error('Failed to load fun message:', e);
+    funText.textContent = 'Spreading good vibes! ❤️';
+    funDiv.style.display = 'block';
   }
+}
+
+
 
   // Call it on page load
   loadFunMessage();
