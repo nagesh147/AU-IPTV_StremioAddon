@@ -9,6 +9,6 @@
     "xml2js": "^0.6.2"
   },
   "scripts": {
-    "start": "node index.js"
+    "start": "node api/index.js"
   }
 }
