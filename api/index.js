@@ -1939,14 +1939,14 @@ app.get('/ping', (req, res) => {
   console.log('Ping hit!');
   res.json({ ok: true });
 });
-
-// Region + type specific manifest
 app.get('/:region/:type/manifest.json', (req, res) => {
   try {
+    console.log('Manifest request:', req.params);
+
     const selectedRegion = req.params.region || DEFAULT_REGION;
+    const type = req.params.type;
 
-    console.log('Manifest hit:', req.params);
-
+    // Build manifest safely
     const manifest = buildManifestV3(selectedRegion, [
       'Traditional Channels',
       'Other Channels',
@@ -1955,12 +1955,18 @@ app.get('/:region/:type/manifest.json', (req, res) => {
       'Radio'
     ]);
 
-    res.json(manifest);
+    // Add debug to confirm we reached here
+    console.log('Sending manifest for region:', selectedRegion, 'type:', type);
+    return res.json(manifest);
   } catch (err) {
     console.error('Manifest error:', err);
-    res.status(500).json({ error: 'Manifest generation failed', detail: err.message });
+    return res.status(500).json({
+      error: 'Manifest generation failed',
+      detail: err.message
+    });
   }
 });
+
 
 // Root fallback
 app.get('/manifest.json', (req, res) => {
