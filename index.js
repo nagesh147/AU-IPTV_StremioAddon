@@ -419,7 +419,7 @@ function rebuildPosterAliases() {
 }
 function resolvePosterAlias(s='') {
   const norm = normalizePosterLookup(s);
-  return POSTER_ALIASES[norm] || null;
+  return POSTTER_ALIASES[norm] || null;
 }
 function posterFromAlias(s='') {
   const key = resolvePosterAlias(s);
@@ -1940,3 +1940,10 @@ app.get('/', (req, res) => {
   if (fs.existsSync(idx)) return res.sendFile(idx);
   res.type('text/plain').send('UI not packaged. Place your index.html in /public.');
 });
+
+if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  module.exports = serverless(app);
+} else {
+  const PORT = process.env.PORT || 7000;
+  app.listen(PORT, () => console.log(`Listening on ${PORT}`));
+}
