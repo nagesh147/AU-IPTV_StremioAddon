@@ -1931,12 +1931,7 @@ app.get('/epg/debug/all', async (_req, res) => {
 const PUBLIC_DIR = path.join(__dirname, 'public');
 app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
 
-// logo & favicon
-app.get(['/AUIPTVLOGO.svg','/favicon.svg'], (_req, res) => {
-  const p = path.join(__dirname, 'AUIPTVLOGO.svg');
-  if (fs.existsSync(p)) return res.type('image/svg+xml').sendFile(p);
-  return res.status(404).end();
-});
+// Keep this redirect if you want favicon.ico to point to your SVG logo:
 app.get('/favicon.ico', (_req, res) => res.redirect(302, '/AUIPTVLOGO.svg'));
 
 // extras groups for UI
@@ -2027,8 +2022,9 @@ app.get('/:region/manifest.json', (req, res) => {
   res.json(man);
 });
 
+// Serve landing page (index.html) from public/
 app.get('/', (req, res) => {
-  const idx = path.join(__dirname, 'public', 'index.html');
+  const idx = path.join(PUBLIC_DIR, 'index.html');
   if (fs.existsSync(idx)) return res.sendFile(idx);
   res.type('text/plain').send('UI not packaged. Place your index.html in /public.');
 });
