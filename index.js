@@ -1941,7 +1941,9 @@ app.get('/', (req, res) => {
   res.type('text/plain').send('UI not packaged. Place your index.html in /public.');
 });
 
-// ...existing code...
+app.get(['/manifest.json', '*/manifest.json'], (req, res) => {
+  res.json(builder.getInterface().manifest);
+});
 
 if (require.main === module) {
   // Local development: start Express server
