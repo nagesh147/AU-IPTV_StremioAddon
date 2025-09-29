@@ -174,7 +174,7 @@ const IMAGES_BASE = process.env.IMAGES_BASE
   || 'https://raw.githubusercontent.com/josharghhh/AU-IPTV_StremioAddon/main';
 
 // NOTE: the map.json lives under /images/ in your repo
-const POSTER_MAP_PATH = process.env.POSTER_MAP_PATH || path.join(__dirname, 'map.json');
+const POSTER_MAP_PATH = process.env.POSTER_MAP_PATH || path.join(__dirname, '..', 'map.json');
 const POSTER_MAP_URL  = process.env.POSTER_MAP_URL  || `${IMAGES_BASE}/images/map.json`;
 
 let POSTER_MAP = {};
@@ -1394,7 +1394,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
       'us tv':'us_tv','usa tv':'us_tv','us channels':'us_tv','usa channels':'us_tv',
       'us sports':'us_sports','usa sports':'us_sports',
       'ca tv':'ca_tv','canada tv':'ca_tv','ca channels':'ca_tv',
-      'ca sports':'ca_sports','canada sports':'ca_sports',
+      'ca sports':'ca_sports','canada sports':'ca_s_ports',
       'au sports':'au_sports','nz sports':'nz_sports',
       'eu sports':'eu_sports','world sports':'world_sports','epl':'epl'
     };
@@ -1928,7 +1928,7 @@ app.get('/epg/debug/all', async (_req, res) => {
 });
 
 // static assets (public/)
-const PUBLIC_DIR = path.join(__dirname, 'public');
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
 
 // favicon.ico redirect (optional)
