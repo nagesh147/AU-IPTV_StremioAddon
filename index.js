@@ -1941,9 +1941,13 @@ app.get('/', (req, res) => {
   res.type('text/plain').send('UI not packaged. Place your index.html in /public.');
 });
 
-if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
-  module.exports = serverless(app);
-} else {
+// ...existing code...
+
+if (require.main === module) {
+  // Local development: start Express server
   const PORT = process.env.PORT || 7000;
   app.listen(PORT, () => console.log(`Listening on ${PORT}`));
 }
+
+// Always export the serverless handler for Vercel and other platforms
+module.exports = serverless(app);
