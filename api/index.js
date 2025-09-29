@@ -1939,7 +1939,7 @@ app.get('/ping', (req, res) => {
   console.log('Ping hit!');
   res.json({ ok: true });
 });
-app.get('/:region/:type/manifest.json', (req, res) => {
+app.get('/api/:region/:type/manifest.json', (req, res) => {
   try {
     console.log('Manifest request:', req.params);
 

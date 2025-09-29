@@ -353,7 +353,7 @@
 // helper to produce the full manifest URL
 // helper to produce the full manifest URL
 function manifestUrl() {
-  return location.origin + pathPrefix() + '/manifest.json';
+  return location.origin + '/api' + pathPrefix() + '/manifest.json';
 }
 
 // OPEN in Stremio button: open the web Install URL synchronously, then copy in background
