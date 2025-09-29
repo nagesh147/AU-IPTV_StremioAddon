@@ -1943,18 +1943,20 @@ app.get('/', (req, res) => {
 
 // Region + type specific manifest
 app.get('/:region/:type/manifest.json', (req, res) => {
-  const selectedRegion = req.params.region || DEFAULT_REGION;
-
-  // Build a region-aware manifest
-  const manifest = buildManifestV3(selectedRegion, [
-    'Traditional Channels',
-    'Other Channels',
-    'All TV Channels',
-    'Regional Channels',
-    'Radio'
-  ]);
-
-  res.json(manifest);
+  try {
+    const selectedRegion = req.params.region || DEFAULT_REGION;
+    const manifest = buildManifestV3(selectedRegion, [
+      'Traditional Channels',
+      'Other Channels',
+      'All TV Channels',
+      'Regional Channels',
+      'Radio'
+    ]);
+    return res.json(manifest);
+  } catch (err) {
+    console.error('Manifest error:', err);
+    return res.status(500).json({ error: 'Manifest generation failed' });
+  }
 });
 
 // Root fallback
