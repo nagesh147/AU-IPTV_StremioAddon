@@ -1941,7 +1941,13 @@ app.get('/', (req, res) => {
   res.type('text/plain').send('UI not packaged. Place your index.html in /public.');
 });
 
-app.get(['/manifest.json', '*/manifest.json'], (req, res) => {
+// Serve manifest.json at any path ending with /manifest.json
+app.get(/^.*\/manifest\.json$/, (req, res) => {
+  res.json(builder.getInterface().manifest);
+});
+
+// Also keep the root manifest.json for direct hits
+app.get('/manifest.json', (req, res) => {
   res.json(builder.getInterface().manifest);
 });
 
