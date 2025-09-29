@@ -2097,9 +2097,10 @@ app.get('/epg/resolve', async (req, res) => {
 });
 
 /* ------------------- Export / Local run ------------------- */
+module.exports = app;
 module.exports.handler = serverless(app);
 
-if (require.main === module) {
-  const PORT = process.env.PORT || 7000;
-  app.listen(PORT, () => console.log('Listening on', PORT));
-}
+// if (require.main === module) {
+//   const PORT = process.env.PORT || 7000;
+//   app.listen(PORT, () => console.log('Listening on', PORT));
+// }
