@@ -412,7 +412,7 @@ q('open').addEventListener('click', (e) => {
 q('manifestLink').addEventListener('click', (e) => {
   // don't call e.preventDefault(); let the anchor open the URL normally
   try { update(); } catch (err) {}
-  updateManifestHref();             // make sure href matches current toggles/region
+  // updateManifestHref();             // make sure href matches current toggles/region
   const m = manifestUrl();
   // copy asynchronously (no await) so navigation remains a direct gesture
   copyToClipboard(m).catch(()=>{});

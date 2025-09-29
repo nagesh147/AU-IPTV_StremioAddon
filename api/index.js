@@ -1934,17 +1934,18 @@ app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
 // favicon.ico redirect (optional)
 app.get('/favicon.ico', (_req, res) => res.redirect(302, '/AUIPTVLOGO.svg'));
 
-// Serve landing page
-app.get('/', (req, res) => {
-  const idx = path.join(PUBLIC_DIR, 'index.html');
-  if (fs.existsSync(idx)) return res.sendFile(idx);
-  res.type('text/plain').send('UI not packaged. Place your index.html in /public.');
+// Debug endpoint
+app.get('/ping', (req, res) => {
+  console.log('Ping hit!');
+  res.json({ ok: true });
 });
 
-// Manifest for region + type
+// Region + type specific manifest
 app.get('/:region/:type/manifest.json', (req, res) => {
   try {
     const selectedRegion = req.params.region || DEFAULT_REGION;
+
+    console.log('Manifest hit:', req.params);
 
     const manifest = buildManifestV3(selectedRegion, [
       'Traditional Channels',
@@ -1957,14 +1958,15 @@ app.get('/:region/:type/manifest.json', (req, res) => {
     res.json(manifest);
   } catch (err) {
     console.error('Manifest error:', err);
-    res.status(500).json({ error: 'Manifest generation failed' });
+    res.status(500).json({ error: 'Manifest generation failed', detail: err.message });
   }
 });
 
-// Root manifest fallback
+// Root fallback
 app.get('/manifest.json', (req, res) => {
   res.json(builder.getInterface().manifest);
 });
+
 
 
 
