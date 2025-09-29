@@ -1971,14 +1971,19 @@ app.get('/ping', (req, res) => {
 
 
 
+// Health check
+app.get('/api/ping', (req, res) => {
+  res.json({ ok: true });
+});
+
+// Manifest by region/type
 app.get('/api/:region/:type/manifest.json', (req, res) => {
   try {
     console.log('Manifest request:', req.params);
 
-    const selectedRegion = req.params.region || DEFAULT_REGION;
+    const selectedRegion = req.params.region || 'Brisbane';
     const type = req.params.type;
 
-    // Build manifest safely
     const manifest = buildManifestV3(selectedRegion, [
       'Traditional Channels',
       'Other Channels',
@@ -1987,25 +1992,18 @@ app.get('/api/:region/:type/manifest.json', (req, res) => {
       'Radio'
     ]);
 
-    // Add debug to confirm we reached here
     console.log('Sending manifest for region:', selectedRegion, 'type:', type);
-    return res.json(manifest);
+    res.json(manifest);   // << MUST send response
   } catch (err) {
     console.error('Manifest error:', err);
-    return res.status(500).json({
-      error: 'Manifest generation failed',
-      detail: err.message
-    });
+    res.status(500).json({ error: err.message });
   }
 });
 
-
-// Root fallback
-app.get('/manifest.json', (req, res) => {
+// Fallback root
+app.get('/api/manifest.json', (req, res) => {
   res.json(builder.getInterface().manifest);
 });
-
-
 
 
 if (require.main === module) {
