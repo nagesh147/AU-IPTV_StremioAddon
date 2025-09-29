@@ -370,10 +370,14 @@ q('open').addEventListener('click', (e) => {
 
 // VIEW MANIFEST anchor: let the <a> handle opening; just refresh and copy in background
 q('manifestLink').addEventListener('click', (e) => {
-  update(); // updates href + preview + weburl
+  e.preventDefault();                // stop default "#" navigation
+  update();                          // refresh preview + href
   const m = manifestUrl();
+  q('manifestLink').href = m;        // explicitly set the correct URL
   copyToClipboard(m).catch(()=>{});
+  window.open(m, '_blank', 'noopener,noreferrer'); // open the correct link
 });
+
 
 // COPY button: copy and show "Copied!" feedback
 q('copy').addEventListener('click', (e) => {
