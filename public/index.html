@@ -350,18 +350,94 @@
       document.body.removeChild(ta);
     }
   }
-  q('open').addEventListener('click', async () => {
-    update(); const m = location.origin + pathPrefix() + '/manifest.json';
-    await copyToClipboard(m); window.open(webInstall(m), '_blank', 'noopener,noreferrer');
+// helper to produce the full manifest URL
+// helper to produce the full manifest URL
+function manifestUrl() {
+  return location.origin + pathPrefix() + '/manifest.json';
+}
+
+// OPEN in Stremio button: open the web Install URL synchronously, then copy in background
+q('open').addEventListener('click', (e) => {
+  update(); // make sure href/preview/weburl are up-to-date
+  const m = manifestUrl();
+
+  // open synchronously to avoid popup blocker
+  window.open(webInstall(m), '_blank', 'noopener,noreferrer');
+
+  // copy in background
+  copyToClipboard(m).catch(()=>{});
+});
+
+// VIEW MANIFEST anchor: let the <a> handle opening; just refresh and copy in background
+q('manifestLink').addEventListener('click', (e) => {
+  update(); // updates href + preview + weburl
+  const m = manifestUrl();
+  copyToClipboard(m).catch(()=>{});
+});
+
+// COPY button: copy and show "Copied!" feedback
+q('copy').addEventListener('click', (e) => {
+  update();
+  const m = manifestUrl();
+  copyToClipboard(m).then(() => {
+    const btn = q('copy');
+    if (!btn) return;
+    const t = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(()=>btn.textContent = t, 1200);
+  }).catch(()=>{
+    const btn = q('copy');
+    if (!btn) return;
+    const t = btn.textContent;
+    btn.textContent = 'Copy failed';
+    setTimeout(()=>btn.textContent = t, 1200);
   });
-  q('manifestLink').addEventListener('click', async (e) => {
-    e.preventDefault(); update(); const m = location.origin + pathPrefix() + '/manifest.json';
-    await copyToClipboard(m); window.open(m, '_blank', 'noopener,noreferrer');
+});
+
+
+// OPEN in Stremio button: open the web Install URL synchronously, then copy in background
+q('open').addEventListener('click', (e) => {
+  // update UI state non-blocking
+  try { update(); } catch (err) { /* ignore if update is async or not present */ }
+  const m = manifestUrl();
+
+  // IMPORTANT: open must happen synchronously to be treated as a user gesture
+  window.open(webInstall(m), '_blank', 'noopener,noreferrer');
+
+  // copy in background (do not await — avoids delaying the open)
+  copyToClipboard(m).catch(()=>{});
+});
+
+// VIEW MANIFEST anchor: let the <a> handle opening; just ensure href is up-to-date and copy in background
+q('manifestLink').addEventListener('click', (e) => {
+  // don't call e.preventDefault(); let the anchor open the URL normally
+  try { update(); } catch (err) {}
+  updateManifestHref();             // make sure href matches current toggles/region
+  const m = manifestUrl();
+  // copy asynchronously (no await) so navigation remains a direct gesture
+  copyToClipboard(m).catch(()=>{});
+});
+
+// COPY button: copy and show "Copied!" feedback (no blocking open)
+q('copy').addEventListener('click', (e) => {
+  try { update(); } catch (err) {}
+  const m = manifestUrl();
+  copyToClipboard(m).then(() => {
+    const btn = q('copy');
+    if (!btn) return;
+    const t = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(()=>btn.textContent = t, 1200);
+  }).catch(()=>{
+    // optional: show failure briefly
+    const btn = q('copy');
+    if (!btn) return;
+    const t = btn.textContent;
+    btn.textContent = 'Copy failed';
+    setTimeout(()=>btn.textContent = t, 1200);
   });
-  q('copy').addEventListener('click', async () => {
-    update(); const m = location.origin + pathPrefix() + '/manifest.json';
-    await copyToClipboard(m); const btn = q('copy'); const t = btn.textContent; btn.textContent = 'Copied!'; setTimeout(()=>btn.textContent=t,1200);
-  });
+});
+
 
   // ---------- initial state ----------
   q('allContent').checked = false;
