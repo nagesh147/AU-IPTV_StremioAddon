@@ -1929,7 +1929,7 @@ app.get('/epg/debug/all', async (_req, res) => {
 
 // static assets (public/)
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
-app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
+// app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
 
 // favicon.ico redirect (optional)
 app.get('/favicon.ico', (_req, res) => res.redirect(302, '/AUIPTVLOGO.svg'));
@@ -1971,8 +1971,13 @@ app.get('/manifest.json', (req, res) => {
 
 
 if (require.main === module) {
+  // Local development only: serve frontend
+  const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+  app.use(express.static(PUBLIC_DIR));
+
   const PORT = process.env.PORT || 7000;
   app.listen(PORT, () => console.log(`Listening locally on http://localhost:${PORT}`));
 }
+
 
 module.exports = serverless(app);
