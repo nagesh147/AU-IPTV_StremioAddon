@@ -174,7 +174,7 @@ const IMAGES_BASE = process.env.IMAGES_BASE
   || 'https://raw.githubusercontent.com/josharghhh/AU-IPTV_StremioAddon/main';
 
 // NOTE: the map.json lives under /images/ in your repo
-const POSTER_MAP_PATH = process.env.POSTER_MAP_PATH || path.join(__dirname, '..', 'map.json');
+const POSTER_MAP_PATH = process.env.POSTER_MAP_PATH || path.join(__dirname, 'map.json');
 const POSTER_MAP_URL  = process.env.POSTER_MAP_URL  || `${IMAGES_BASE}/images/map.json`;
 
 let POSTER_MAP = {};
@@ -419,7 +419,7 @@ function rebuildPosterAliases() {
 }
 function resolvePosterAlias(s='') {
   const norm = normalizePosterLookup(s);
-  return POSTTER_ALIASES[norm] || null;
+  return POSTER_ALIASES[norm] || null;
 }
 function posterFromAlias(s='') {
   const key = resolvePosterAlias(s);
@@ -1340,25 +1340,6 @@ function buildHeaders(url) {
   };
 }
 /* ---------------------- Manifest (v3) --------------------- */
-// function buildManifestV3(selectedRegion, genreOptions) {
-//   return {
-//     id: 'com.joshargh.auiptv',
-//     version: '2.8.1',
-//     name: `AU IPTV (${selectedRegion})`,
-//     description: 'Australian + NZ live streams with optional international TV, Sports and Additional Packs.',
-//     types: ['tv'],
-//     catalogs: [{
-//       type: 'tv',
-//       id: `au_tv_${selectedRegion}`,
-//       name: `AU IPTV - ${selectedRegion}`,
-//       extra: [ { name: 'search' }, { name: 'genre', options: genreOptions, isRequired: false } ]
-//     }],
-//     resources: ['catalog','meta','stream']
-//   };
-// }
-
-// add this near the bottom of api/index.js (before module.exports)
-
 function buildManifestV3(selectedRegion, genreOptions) {
   return {
     id: 'com.joshargh.auiptv',
@@ -1370,21 +1351,11 @@ function buildManifestV3(selectedRegion, genreOptions) {
       type: 'tv',
       id: `au_tv_${selectedRegion}`,
       name: `AU IPTV - ${selectedRegion}`,
-      extra: [
-        { name: 'search' },
-        { name: 'genre', options: genreOptions, isRequired: false }
-      ]
+      extra: [ { name: 'search' }, { name: 'genre', options: genreOptions, isRequired: false } ]
     }],
     resources: ['catalog','meta','stream']
   };
 }
-
-// debug health check
-app.get('/ping', (req, res) => {
-  res.json({ ok: true });
-});
-
-
 
 /* ---------------------- Addon Builder --------------------- */
 const builder = new addonBuilder(buildManifestV3(DEFAULT_REGION, [
@@ -1423,7 +1394,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
       'us tv':'us_tv','usa tv':'us_tv','us channels':'us_tv','usa channels':'us_tv',
       'us sports':'us_sports','usa sports':'us_sports',
       'ca tv':'ca_tv','canada tv':'ca_tv','ca channels':'ca_tv',
-      'ca sports':'ca_sports','canada sports':'ca_s_ports',
+      'ca sports':'ca_sports','canada sports':'ca_sports',
       'au sports':'au_sports','nz sports':'nz_sports',
       'eu sports':'eu_sports','world sports':'world_sports','epl':'epl'
     };
@@ -1957,64 +1928,178 @@ app.get('/epg/debug/all', async (_req, res) => {
 });
 
 // static assets (public/)
-const PUBLIC_DIR = path.join(__dirname, '..', 'public');
-// app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
+const PUBLIC_DIR = path.join(__dirname, 'public');
+app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
 
-// favicon.ico redirect (optional)
+// Keep this redirect if you want favicon.ico to point to your SVG logo:
 app.get('/favicon.ico', (_req, res) => res.redirect(302, '/AUIPTVLOGO.svg'));
 
-// Debug endpoint
-app.get('/ping', (req, res) => {
-  console.log('Ping hit!');
-  res.json({ ok: true });
-});
-
-
-
-// Health check
-app.get('/api/ping', (req, res) => {
-  res.json({ ok: true });
-});
-
-// Manifest by region/type
-app.get('/api/:region/:type/manifest.json', (req, res) => {
+// extras groups for UI
+app.get('/extras/groups', async (_req, res) => {
   try {
-    console.log('Manifest request:', req.params);
-
-    const selectedRegion = req.params.region || 'Brisbane';
-    const type = req.params.type;
-
-    const manifest = buildManifestV3(selectedRegion, [
-      'Traditional Channels',
-      'Other Channels',
-      'All TV Channels',
-      'Regional Channels',
-      'Radio'
-    ]);
-
-    console.log('Sending manifest for region:', selectedRegion, 'type:', type);
-    res.json(manifest);   // << MUST send response
-  } catch (err) {
-    console.error('Manifest error:', err);
-    res.status(500).json({ error: err.message });
+    const groups = await getExtrasGroups({ forceFresh: false });
+    const arr = [];
+    for (const [, g] of groups) arr.push({ slug: g.slug, name: g.name, count: (g.channels?.size || 0) });
+    res.json({ groups: arr });
+  } catch (e) {
+    console.error('[/extras/groups] Error:', e);
+    res.status(500).json({ error: e?.message || 'failed' });
   }
 });
 
-// Fallback root
-app.get('/api/manifest.json', (req, res) => {
-  res.json(builder.getInterface().manifest);
+
+// Helper base URL
+function baseUrl(req) {
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+  const host  = req.headers['x-forwarded-host']  || req.headers.host;
+  return `${proto}://${host}`;
+}
+// Parse flags from request path for the *manifest* routes (returns { regionRaw, flags:Set })
+function parseRequestFlagsFromPath(reqPath) {
+  const parts = reqPath.split('/').filter(Boolean);
+  const flags = new Set(parts.slice(1));
+  if (flags.has('sports')) ['uksports','ussports','casports','ausports','nzsports','eusports','worldsports','epl'].forEach(f=>flags.add(f));
+  return { regionRaw: decodeURIComponent(parts[0] || DEFAULT_REGION), flags };
+}
+
+/* ----------------------- Manifest endpoints ---------------- */
+function buildGenresFromFlags(region, flags, extrasList = []) {
+  const opts = ['Traditional Channels','Other Channels','All TV Channels','Regional Channels','Radio'];
+  REGIONS.filter(r => r !== region).forEach(city => opts.push(`${city} TV`));
+  opts.push('NZ TV','NZ Radio','UK TV','UK Sports','US TV','US Sports','CA TV','CA Sports','AU Sports','NZ Sports','EU Sports','World Sports','EPL');
+  for (const g of extrasList) opts.push(`Extra: ${g.name}`);
+  return opts;
+}
+
+// ---------------- FunAPI Proxy ----------------
+app.get('/fun/:type', async (req, res) => {
+  try {
+    const type = req.params.type || 'compliment';
+    const url = `https://my-fun-api.onrender.com/${encodeURIComponent(type)}`;
+
+    const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!r.ok) throw new Error(`Upstream error: ${r.status}`);
+
+    const data = await r.json();
+    res.set('Access-Control-Allow-Origin', '*'); // allow browser calls
+    res.json(data);
+  } catch (e) {
+    console.error('[FunAPI proxy error]', e);
+    res.status(500).json({ error: 'FunAPI proxy failed' });
+  }
 });
 
 
+app.get(/^\/[^^/]+(?:\/[^/]+)*\/manifest\.json$/, async (req, res) => {
+  try {
+    markInstall();
+    const { regionRaw, flags } = parseRequestFlagsFromPath(req.path);
+    const region = validRegion(regionRaw);
+
+    let extrasList = [];
+    if (flags.has('extras')) {
+      try {
+        const groups = await getExtrasGroups({ forceFresh: false });
+        extrasList = [...groups.values()].map(g => ({ slug: g.slug, name: g.name }));
+      } catch {}
+    }
+
+    const man = buildManifestV3(region, buildGenresFromFlags(region, flags, extrasList));
+    man.logo = man.icon = `${baseUrl(req)}/AUIPTVLOGO.svg`;
+    if (STREMIO_ADDONS_CONFIG.signature) man.stremioAddonsConfig = STREMIO_ADDONS_CONFIG;
+
+    res.json(man);
+  } catch (e) {
+    res.status(500).json({ error: e?.message || String(e) });
+  }
+});
+
+app.get('/:region/manifest.json', (req, res) => {
+  const region = validRegion(req.params.region);
+  const man = buildManifestV3(region, buildGenresFromFlags(region, new Set(), []));
+  man.logo = man.icon = `${baseUrl(req)}/AUIPTVLOGO.svg`;
+  if (STREMIO_ADDONS_CONFIG.signature) man.stremioAddonsConfig = STREMIO_ADDONS_CONFIG;
+  res.json(man);
+});
+
+// Serve landing page (index.html) from public/
+app.get('/', (req, res) => {
+  const idx = path.join(PUBLIC_DIR, 'index.html');
+  if (fs.existsSync(idx)) return res.sendFile(idx);
+  res.type('text/plain').send('UI not packaged. Place your index.html in /public.');
+});
+
+// Return merged XMLTV for the current selection (used by clients that want XML)
+app.get(/^\/([^/]+)(?:\/.*)?\/epg\.xml$/, async (req, res) => {
+  try {
+    const region = decodeURIComponent(req.params[0] || 'Brisbane');
+    const xml = await getMergedEpg(region, req.path);
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=60'); // clients can re-use a minute
+    res.send(xml);
+  } catch (e) {
+    res.status(500).send(`<!-- EPG error: ${e.message} -->`);
+  }
+});
+
+// Optional: JSON view for debugging (handy when testing Rogue mapping)
+app.get(/^\/([^/]+)(?:\/.*)?\/epg\.json$/, async (req, res) => {
+  try {
+    const region = decodeURIComponent(req.params[0] || 'Brisbane');
+    const xml = await getMergedEpg(region, req.path);
+    const obj = await parseStringPromise(xml, { explicitArray: true, mergeAttrs: true });
+    res.json({ channels: (obj.tv?.channel || []).length, programmes: (obj.tv?.programme || []).length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* ----------------------- SDK Router ----------------------- */
+const sdkRouter = getRouter(builder.getInterface());
+app.use((req, _res, next) => {
+  const targets = ['/catalog/','/meta/','/stream/'];
+  let idx = -1;
+  for (const t of targets) { const i = req.url.indexOf(t); if (i >= 0) idx = (idx === -1 ? i : Math.min(idx, i)); }
+  if (idx > 0) req.url = req.url.slice(idx);
+  next();
+});
+app.use('/', sdkRouter);
+
+// Quick visibility into what we indexed from Rogue
+app.get('/epg/debug', async (_req, res) => {
+  try {
+    const rogue = await getRogueEPGIndex('ALL');
+    const sample = (idx) => Array.from(idx.programmes.entries()).slice(0, 3)
+      .map(([id, arr]) => ({ id, items: arr.length, first: arr[0]?.title }));
+    res.json({
+      rogue: { channels: rogue.nameIndex.size, programmeChannels: rogue.programmes.size, sample: sample(rogue) }
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Try to resolve a single channel against the indexes
+app.get('/epg/resolve', async (req, res) => {
+  const name = req.query.name || '';
+  const cid  = req.query.cid  || '';
+  try {
+    const rogue = await getRogueEPGIndex('ALL');
+    const tryIdx = (label, idx) => {
+      const id = resolveEpgChannelId({ cid, name, idx });
+      const programmes = id ? (idx.programmes.get(id) || []) : [];
+      return { label, resolvedId: id, count: programmes.length, first: programmes[0]?.title };
+    };
+    res.json({ rogue: tryIdx('rogue', rogue) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* ------------------- Export / Local run ------------------- */
+module.exports.handler = serverless(app);
+
 if (require.main === module) {
-  // Local development only: serve frontend
-  const PUBLIC_DIR = path.join(__dirname, '..', 'public');
-  app.use(express.static(PUBLIC_DIR));
-
   const PORT = process.env.PORT || 7000;
-  app.listen(PORT, () => console.log(`Listening locally on http://localhost:${PORT}`));
+  app.listen(PORT, () => console.log('Listening on', PORT));
 }
-
-
-
-module.exports = serverless(app);
