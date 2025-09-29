@@ -1941,10 +1941,11 @@ app.get('/', (req, res) => {
   res.type('text/plain').send('UI not packaged. Place your index.html in /public.');
 });
 
-// Region + type specific manifest
+// Manifest for region + type
 app.get('/:region/:type/manifest.json', (req, res) => {
   try {
     const selectedRegion = req.params.region || DEFAULT_REGION;
+
     const manifest = buildManifestV3(selectedRegion, [
       'Traditional Channels',
       'Other Channels',
@@ -1952,14 +1953,15 @@ app.get('/:region/:type/manifest.json', (req, res) => {
       'Regional Channels',
       'Radio'
     ]);
-    return res.json(manifest);
+
+    res.json(manifest);
   } catch (err) {
     console.error('Manifest error:', err);
-    return res.status(500).json({ error: 'Manifest generation failed' });
+    res.status(500).json({ error: 'Manifest generation failed' });
   }
 });
 
-// Root fallback
+// Root manifest fallback
 app.get('/manifest.json', (req, res) => {
   res.json(builder.getInterface().manifest);
 });
