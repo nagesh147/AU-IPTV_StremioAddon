@@ -1340,6 +1340,25 @@ function buildHeaders(url) {
   };
 }
 /* ---------------------- Manifest (v3) --------------------- */
+// function buildManifestV3(selectedRegion, genreOptions) {
+//   return {
+//     id: 'com.joshargh.auiptv',
+//     version: '2.8.1',
+//     name: `AU IPTV (${selectedRegion})`,
+//     description: 'Australian + NZ live streams with optional international TV, Sports and Additional Packs.',
+//     types: ['tv'],
+//     catalogs: [{
+//       type: 'tv',
+//       id: `au_tv_${selectedRegion}`,
+//       name: `AU IPTV - ${selectedRegion}`,
+//       extra: [ { name: 'search' }, { name: 'genre', options: genreOptions, isRequired: false } ]
+//     }],
+//     resources: ['catalog','meta','stream']
+//   };
+// }
+
+// add this near the bottom of api/index.js (before module.exports)
+
 function buildManifestV3(selectedRegion, genreOptions) {
   return {
     id: 'com.joshargh.auiptv',
@@ -1351,11 +1370,21 @@ function buildManifestV3(selectedRegion, genreOptions) {
       type: 'tv',
       id: `au_tv_${selectedRegion}`,
       name: `AU IPTV - ${selectedRegion}`,
-      extra: [ { name: 'search' }, { name: 'genre', options: genreOptions, isRequired: false } ]
+      extra: [
+        { name: 'search' },
+        { name: 'genre', options: genreOptions, isRequired: false }
+      ]
     }],
     resources: ['catalog','meta','stream']
   };
 }
+
+// debug health check
+app.get('/ping', (req, res) => {
+  res.json({ ok: true });
+});
+
+
 
 /* ---------------------- Addon Builder --------------------- */
 const builder = new addonBuilder(buildManifestV3(DEFAULT_REGION, [
@@ -1939,6 +1968,9 @@ app.get('/ping', (req, res) => {
   console.log('Ping hit!');
   res.json({ ok: true });
 });
+
+
+
 app.get('/api/:region/:type/manifest.json', (req, res) => {
   try {
     console.log('Manifest request:', req.params);
@@ -1984,6 +2016,7 @@ if (require.main === module) {
   const PORT = process.env.PORT || 7000;
   app.listen(PORT, () => console.log(`Listening locally on http://localhost:${PORT}`));
 }
+
 
 
 module.exports = serverless(app);
