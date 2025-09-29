@@ -1941,19 +1941,27 @@ app.get('/', (req, res) => {
   res.type('text/plain').send('UI not packaged. Place your index.html in /public.');
 });
 
-// Serve manifest.json with optional region + type
+// Region + type specific manifest
 app.get('/:region/:type/manifest.json', (req, res) => {
   const selectedRegion = req.params.region || DEFAULT_REGION;
+
+  // Build a region-aware manifest
   const manifest = buildManifestV3(selectedRegion, [
-    'Traditional Channels','Other Channels','All TV Channels','Regional Channels','Radio'
+    'Traditional Channels',
+    'Other Channels',
+    'All TV Channels',
+    'Regional Channels',
+    'Radio'
   ]);
+
   res.json(manifest);
 });
 
-// Root fallback for /manifest.json
+// Root fallback
 app.get('/manifest.json', (req, res) => {
   res.json(builder.getInterface().manifest);
 });
+
 
 
 if (require.main === module) {
