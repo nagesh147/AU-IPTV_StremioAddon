@@ -1941,21 +1941,24 @@ app.get('/', (req, res) => {
   res.type('text/plain').send('UI not packaged. Place your index.html in /public.');
 });
 
-// Serve manifest.json at any path ending with /manifest.json
-app.get(/^.*\/manifest\.json$/, (req, res) => {
-  res.json(builder.getInterface().manifest);
+// Serve manifest.json with optional region + type
+app.get('/:region/:type/manifest.json', (req, res) => {
+  const selectedRegion = req.params.region || DEFAULT_REGION;
+  const manifest = buildManifestV3(selectedRegion, [
+    'Traditional Channels','Other Channels','All TV Channels','Regional Channels','Radio'
+  ]);
+  res.json(manifest);
 });
 
-// Also keep the root manifest.json for direct hits
+// Root fallback for /manifest.json
 app.get('/manifest.json', (req, res) => {
   res.json(builder.getInterface().manifest);
 });
 
-// if (require.main === module) {
-//   // Local development: start Express server
-//   const PORT = process.env.PORT || 7000;
-//   app.listen(PORT, () => console.log(`Listening on ${PORT}`));
-// }
 
-// Always export the serverless handler for Vercel and other platforms
+if (require.main === module) {
+  const PORT = process.env.PORT || 7000;
+  app.listen(PORT, () => console.log(`Listening locally on http://localhost:${PORT}`));
+}
+
 module.exports = serverless(app);
